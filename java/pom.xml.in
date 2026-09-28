@@ -19,20 +19,10 @@
         <url>https://github.com/VowpalWabbit/vowpal_wabbit/tree/master</url>
     </scm>
 
-    <distributionManagement>
-        <snapshotRepository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
-        <repository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-        </repository>
-    </distributionManagement>
 
     <licenses>
         <license>
-            <name>Vowpal Wabbit License</name>
+            <name>BSD-3-Clause</name>
             <url>https://github.com/VowpalWabbit/vowpal_wabbit/blob/master/LICENSE</url>
         </license>
     </licenses>
@@ -58,14 +48,36 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <java.version>1.7</java.version>
+        <java.version>1.8</java.version>
+        <junit.version>5.11.4</junit.version>
     </properties>
 
     <dependencies>
+        <!-- JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- JUnit 4 compatibility for existing tests -->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.11</version>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.vintage</groupId>
+            <artifactId>junit-vintage-engine</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- JSON parsing for test loader -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.11.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -77,8 +89,15 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>16.0.1</version>
+            <version>33.4.0-jre</version>
             <scope>test</scope>
+            <exclusions>
+                <!-- Exclude listenablefuture to avoid duplicate class issues -->
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>listenablefuture</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 
@@ -99,7 +118,7 @@
         <plugins>
             <plugin>
                 <artifactId>maven-clean-plugin</artifactId>
-                <version>2.6.1</version>
+                <version>3.4.1</version>
                 <configuration>
                     <excludeDefaultDirectories>true</excludeDefaultDirectories>
                     <filesets>
@@ -108,7 +127,7 @@
                             <excludes>
                                 <!-- files created by CMake -->
                                 <exclude>bin/**</exclude>
-                                <exclude>test-classes/vw-bin.txt</exclude>
+                                <exclude>test-classes/vw_cli_bin.txt</exclude>
                                 <exclude>*vw_jni*</exclude>
                             </excludes>
                             <followSymlinks>false</followSymlinks>
@@ -119,16 +138,17 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.8.0</version>
+                <version>3.13.0</version>
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
+                    <release>8</release>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>1.1</version>
+                <version>3.5.0</version>
                 <executions>
                     <execution>
                         <id>enforce-ban-duplicate-classes</id>
@@ -139,6 +159,10 @@
                             <rules>
                                 <banDuplicateClasses>
                                     <findAllDuplicates>true</findAllDuplicates>
+                                    <ignoreClasses>
+                                        <!-- Ignore module-info.class duplicates from Java 9+ modules -->
+                                        <ignoreClass>module-info</ignoreClass>
+                                    </ignoreClasses>
                                 </banDuplicateClasses>
                             </rules>
                             <fail>true</fail>
@@ -160,14 +184,14 @@
                     <dependency>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>extra-enforcer-rules</artifactId>
-                        <version>1.0-alpha-3</version>
+                        <version>1.8.0</version>
                     </dependency>
                 </dependencies>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
-                <version>2.19.1</version>
+                <version>3.5.2</version>
                 <executions>
                 <execution>
                     <goals>
@@ -177,13 +201,17 @@
                 </execution>
                 </executions>
                 <configuration>
-                    <argLine>-Djava.library.path=${project.build.directory}/bin/natives/linux_64</argLine>
+                    <argLine>-Xmx256m -Djava.library.path=${project.build.directory}/bin/natives/@VW_JNI_NATIVES_DIR@</argLine>
+                    <!-- Set test root for RunTests integration tests -->
+                    <systemPropertyVariables>
+                        <VW_TEST_ROOT>${project.basedir}/../test</VW_TEST_ROOT>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.17</version>
+                <version>3.5.2</version>
                 <executions>
                     <execution>
                         <id>surefire-test</id>
@@ -196,6 +224,11 @@
                 <configuration>
                     <redirectTestOutputToFile>true</redirectTestOutputToFile>
 
+                    <!-- Exclude integration tests - they are run by failsafe plugin -->
+                    <excludes>
+                        <exclude>**/*IT.java</exclude>
+                    </excludes>
+
                     <!-- It's important to run tests serially because we are doing timing tests in some of the tests. -->
                     <!-- TODO: That tests may fail when executed in parallel is likely an indication of a thread-safety issue -->
                     <!-- TODO: This thread-safety issue could be on the Java or C side.  Merits future investigation. -->
@@ -203,13 +236,16 @@
                     <!--<forkMode>once</forkMode>-->
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
-                    <argLine>-Djava.library.path=${project.build.directory}/bin/natives/linux_64</argLine>
-
+                    <argLine>-Xmx256m -Djava.library.path=${project.build.directory}/bin/natives/@VW_JNI_NATIVES_DIR@</argLine>
+                    <!-- Set test root for RunTests -->
+                    <systemPropertyVariables>
+                        <VW_TEST_ROOT>${project.basedir}/../test</VW_TEST_ROOT>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
                 <artifactId>maven-resources-plugin</artifactId>
-                <version>2.7</version>
+                <version>3.3.1</version>
                 <executions>
                     <execution>
                         <id>copy-resources</id>
@@ -231,21 +267,44 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- Publishes to Maven Central through the Central Portal. This replaces the
+                 nexus-staging-maven-plugin, which talked to the Nexus 2 API on
+                 oss.sonatype.org; OSSRH reached end of life on 2025-06-30 and was shut
+                 down, so that path no longer exists.
+
+                 publishingServerId must match a <server> entry in settings.xml holding a
+                 Central Portal user token (generated at
+                 https://central.sonatype.com/usertoken), not the old OSSRH credentials.
+
+                 autoPublish was false while this pipeline was unproven, because Maven
+                 Central is the only destination here with no undo: a published version
+                 cannot be replaced or withdrawn, only superseded. 9.11.9 went through it
+                 cleanly (uploaded, validated, published), so it is on.
+
+                 What still stands between a tag and Central is worth knowing. publish_maven
+                 needs jar-consumer-test, which loads the assembled JAR on all five
+                 platforms, so a JAR whose native will not load never reaches the upload.
+                 waitUntil then defaults to "validated", so Central's own checks on
+                 signatures, sources and javadoc jars, coordinates and POM metadata run
+                 before the job reports success.
+
+                 Set this back to false to make a release wait for a human in the Portal
+                 again; the workflow notices and says so in its summary. -->
             <plugin>
-                <groupId>org.sonatype.plugins</groupId>
-                <artifactId>nexus-staging-maven-plugin</artifactId>
-                <version>1.6.5</version>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.11.0</version>
                 <extensions>true</extensions>
                 <configuration>
-                    <serverId>ossrh</serverId>
-                    <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                    <autoReleaseAfterClose>true</autoReleaseAfterClose>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                    <deploymentName>vw-jni @PACKAGE_VERSION@</deploymentName>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.0.1</version>
+                <version>3.11.2</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
@@ -261,7 +320,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>3.0.1</version>
+                <version>3.3.1</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -286,8 +345,14 @@
         <profile>
             <id>release-sign-artifacts</id>
             <activation>
+                <!-- Deliberately NOT "performRelease". That name is reserved by Maven's
+                     super POM, whose built-in release-profile activates on it and attaches
+                     sources and javadocs. This pom already declares maven-source-plugin and
+                     maven-javadoc-plugin in the main build, so activating both produced two
+                     sources jars and the deploy failed with "We have duplicated artifacts
+                     attached". Use a name of our own so only this profile switches on. -->
                 <property>
-                    <name>performRelease</name>
+                    <name>vwPerformRelease</name>
                     <value>true</value>
                 </property>
             </activation>
@@ -296,7 +361,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>
-                        <version>1.6</version>
+                        <version>3.2.7</version>
                         <executions>
                             <execution>
                                 <id>sign-artifacts</id>

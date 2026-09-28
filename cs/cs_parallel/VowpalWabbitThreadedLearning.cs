@@ -1,4 +1,4 @@
-﻿// --------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------------------
 // <copyright file="VowpalWabbitThreadedLearning.cs">
 //   Copyright (c) by respective owners including Yahoo!, Microsoft, and
 //   individual contributors. All rights reserved.  Released under a BSD
@@ -8,7 +8,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.Contracts;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,6 +19,41 @@ namespace VW
     /// <summary>
     /// VW wrapper supporting multi-core learning by utilizing thread-based allreduce.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This class manages multiple internal VW instances coordinated via allreduce.
+    /// Each instance runs on its own thread with a bounded work queue. Calls to
+    /// <see cref="Learn(string)"/> enqueue examples and return immediately — learning
+    /// happens asynchronously on one of the internal instances (chosen by
+    /// <see cref="VowpalWabbitSettings.ExampleDistribution"/>). This is not the same as
+    /// thread-safe concurrent learning; callers submit work from a single thread (or
+    /// coordinate externally) and the class handles parallelism internally.
+    /// </para>
+    /// <para>Typical usage:</para>
+    /// <code>
+    /// using (var vw = new VowpalWabbitThreadedLearning(settings))
+    /// {
+    ///     foreach (var example in examples)
+    ///         vw.Learn(example);
+    ///
+    ///     // Option A: save mid-training by flushing
+    ///     var saveTask = vw.SaveModel("checkpoint.model");
+    ///     await vw.Flush();
+    ///     await saveTask;
+    ///
+    ///     // Option B: save after training is complete
+    ///     await vw.Complete();
+    ///     await vw.SaveModel("final.model");
+    /// }
+    /// </code>
+    /// <para>
+    /// Weight synchronization (allreduce) occurs automatically every
+    /// <see cref="VowpalWabbitSettings.ExampleCountPerRun"/> examples, or explicitly
+    /// via <see cref="Flush"/>. Deferred operations like <see cref="SaveModel()"/> and
+    /// <see cref="PerformanceStatistics"/> execute at these synchronization points, or
+    /// can be called directly after <see cref="Complete"/>.
+    /// </para>
+    /// </remarks>
     public class VowpalWabbitThreadedLearning : IDisposable
     {
         /// <summary>
@@ -59,6 +94,11 @@ namespace VW
         private Task[] completionTasks;
 
         /// <summary>
+        /// Combined task tracking whether all completion tasks have finished.
+        /// </summary>
+        private Task allCompletedTask;
+
+        /// <summary>
         /// Number of examples seen sofar. Used by round robin example distributor.
         /// </summary>
         private int exampleCount;
@@ -74,7 +114,6 @@ namespace VW
 
             if (settings.ParallelOptions == null)
                 throw new ArgumentNullException("settings.ParallelOptions must be set");
-            Contract.EndContractBlock();
 
             this.Settings = settings;
 
@@ -148,8 +187,10 @@ namespace VW
                         // perform final AllReduce
                         vw.EndOfPass();
 
-                        // execute synchronization actions
-                        foreach (var syncAction in this.syncActions.RemoveAll())
+                        // atomically drain and mark complete — allows sync actions
+                        // (e.g. SaveModel) to be enqueued between Complete() and this
+                        // continuation executing
+                        foreach (var syncAction in this.syncActions.CompleteAndRemoveAll())
                         {
                             syncAction(vw);
                         }
@@ -231,13 +272,46 @@ namespace VW
         }
 
         /// <summary>
+        /// Forces an AllReduce synchronization and drains all pending sync actions
+        /// (e.g. <see cref="SaveModel()"/>, <see cref="PerformanceStatistics"/>)
+        /// without waiting for <see cref="VowpalWabbitSettings.ExampleCountPerRun"/> to be reached.
+        /// </summary>
+        /// <returns>Task that completes once the synchronization and all pending sync actions have executed.</returns>
+        public Task Flush()
+        {
+            var completionSource = new TaskCompletionSource<bool>();
+
+            this.syncActions.Add(vw => completionSource.SetResult(true));
+
+            this.observers[0].OnNext(vw =>
+            {
+                // perform AllReduce
+                vw.EndOfPass();
+
+                // execute synchronization actions
+                foreach (var syncAction in this.syncActions.RemoveAll())
+                {
+                    syncAction(vw);
+                }
+            });
+
+            for (int i = 1; i < this.observers.Length; i++)
+            {
+                // perform AllReduce
+                this.observers[i].OnNext(vw => vw.EndOfPass());
+            }
+
+            return completionSource.Task;
+        }
+
+        /// <summary>
         /// Enqueues an action to be executed on one of vw instances.
         /// </summary>
         /// <param name="action">The action to be executed (e.g. Learn/Predict/...).</param>
         /// <remarks>If number of actions waiting to be executed has reached <see name="VowpalWabbitSettings.MaxExampleQueueLengthPerInstance"/> this method blocks.</remarks>
         public void Post(Action<VowpalWabbit> action)
         {
-            Contract.Requires(action != null);
+            Debug.Assert(action != null);
 
             var exampleCount = this.CheckEndOfPass();
 
@@ -254,7 +328,7 @@ namespace VW
         /// <returns>The awaitable result of the supplied task.</returns>
         internal Task<T> Post<T>(Func<VowpalWabbit, T> func)
         {
-            Contract.Requires(func!= null);
+            Debug.Assert(func!= null);
 
             var exampleCount = this.CheckEndOfPass();
 
@@ -280,20 +354,32 @@ namespace VW
         /// Learns from the given example.
         /// </summary>
         /// <param name="line">The example to learn.</param>
+        /// <remarks>
+        /// This method enqueues the example for asynchronous learning on one of the
+        /// internal VW instances and returns immediately. The example string is captured
+        /// by the work item and must not be mutated after this call. To ensure all
+        /// enqueued learning is complete, call <see cref="Complete"/> or <see cref="Flush"/>.
+        /// </remarks>
         public void Learn(string line)
         {
-            Contract.Requires(line != null);
+            Debug.Assert(line != null);
 
             this.Post(vw => vw.Learn(line));
         }
 
         /// <summary>
-        /// Learns from the given example.
+        /// Learns from the given multi-line example.
         /// </summary>
         /// <param name="lines">The multi-line example to learn.</param>
+        /// <remarks>
+        /// This method enqueues the example for asynchronous learning on one of the
+        /// internal VW instances and returns immediately. The lines are captured
+        /// by the work item and must not be mutated after this call. To ensure all
+        /// enqueued learning is complete, call <see cref="Complete"/> or <see cref="Flush"/>.
+        /// </remarks>
         public void Learn(IEnumerable<string> lines)
         {
-            Contract.Requires(lines != null);
+            Debug.Assert(lines != null);
 
             this.Post(vw => vw.Learn(lines));
         }
@@ -301,50 +387,81 @@ namespace VW
         /// <summary>
         /// Synchronized performance statistics.
         /// </summary>
-        /// <remarks>The task is only completed after synchronization of all instances, triggered <see cref="VowpalWabbitSettings.ExampleCountPerRun"/> example.</remarks>
+        /// <remarks>
+        /// Can be accessed before or after <see cref="Complete"/>. If accessed after completion,
+        /// returns statistics directly from the root VW instance.
+        /// </remarks>
         public Task<VowpalWabbitPerformanceStatistics> PerformanceStatistics
         {
             get
             {
+                if (this.allCompletedTask != null && this.allCompletedTask.IsCompleted)
+                {
+                    return Task.FromResult(this.vws[0].PerformanceStatistics);
+                }
+
                 var completionSource = new TaskCompletionSource<VowpalWabbitPerformanceStatistics>();
 
-                this.syncActions.Add(vw => completionSource.SetResult(vw.PerformanceStatistics));
+                if (!this.syncActions.TryAdd(vw => completionSource.SetResult(vw.PerformanceStatistics)))
+                {
+                    return Task.FromResult(this.vws[0].PerformanceStatistics);
+                }
 
                 return completionSource.Task;
             }
         }
 
         /// <summary>
-        /// Signal that no more examples are send.
+        /// Signals that no more examples will be submitted.
         /// </summary>
-        /// <returns>Task completes once the learning and cleanup is done.</returns>
+        /// <returns>Task that completes once all enqueued examples have been learned
+        /// and a final allreduce synchronization has been performed.</returns>
+        /// <remarks>
+        /// After awaiting this task, the model is fully trained and methods like
+        /// <see cref="SaveModel()"/> and <see cref="PerformanceStatistics"/> can be
+        /// called synchronously (they execute immediately on the root VW instance
+        /// rather than being deferred to a sync point).
+        /// </remarks>
         public Task Complete()
         {
-            // make sure no more sync actions are added, which might otherwise never been called
-            this.syncActions.CompleteAdding();
-
             foreach (var actionBlock in this.actionBlocks)
             {
                 actionBlock.Complete();
             }
 
-            return Task.WhenAll(this.completionTasks);
-
+            this.allCompletedTask = Task.WhenAll(this.completionTasks);
+            return this.allCompletedTask;
         }
 
         /// <summary>
         /// Saves a model as part of the synchronization.
         /// </summary>
-        /// <returns>Task compeletes once the model is saved.</returns>
+        /// <remarks>
+        /// Can be called before or after <see cref="Complete"/>. If called after completion,
+        /// the model is saved directly on the root VW instance. If called before, the save is
+        /// deferred until the next synchronization point or completion.
+        /// </remarks>
+        /// <returns>Task that completes once the model is saved.</returns>
         public Task SaveModel()
         {
+            if (this.allCompletedTask != null && this.allCompletedTask.IsCompleted)
+            {
+                this.vws[0].SaveModel();
+                return Task.FromResult(true);
+            }
+
             var completionSource = new TaskCompletionSource<bool>();
 
-            this.syncActions.Add(vw =>
+            if (!this.syncActions.TryAdd(vw =>
             {
                 vw.SaveModel();
                 completionSource.SetResult(true);
-            });
+            }))
+            {
+                // sync actions were already drained and marked complete
+                this.vws[0].SaveModel();
+                return Task.FromResult(true);
+            }
 
             return completionSource.Task;
         }
@@ -352,18 +469,34 @@ namespace VW
         /// <summary>
         /// Saves a model as part of the synchronization.
         /// </summary>
-        /// <returns>Task compeletes once the model is saved.</returns>
+        /// <remarks>
+        /// Can be called before or after <see cref="Complete"/>. If called after completion,
+        /// the model is saved directly on the root VW instance. If called before, the save is
+        /// deferred until the next synchronization point or completion.
+        /// </remarks>
+        /// <returns>Task that completes once the model is saved.</returns>
         public Task SaveModel(string filename)
         {
-            Contract.Requires(!string.IsNullOrEmpty(filename));
+            Debug.Assert(!string.IsNullOrEmpty(filename));
+
+            if (this.allCompletedTask != null && this.allCompletedTask.IsCompleted)
+            {
+                this.vws[0].SaveModel(filename);
+                return Task.FromResult(true);
+            }
 
             var completionSource = new TaskCompletionSource<bool>();
 
-            this.syncActions.Add(vw =>
+            if (!this.syncActions.TryAdd(vw =>
             {
                 vw.SaveModel(filename);
                 completionSource.SetResult(true);
-            });
+            }))
+            {
+                // sync actions were already drained and marked complete
+                this.vws[0].SaveModel(filename);
+                return Task.FromResult(true);
+            }
 
             return completionSource.Task;
         }
@@ -446,6 +579,23 @@ namespace VW
             }
 
             /// <summary>
+            /// Tries to add an object to the end of the list.
+            /// </summary>
+            /// <param name="item">The object to be added to the list.</param>
+            /// <returns>True if the item was added; false if the list has been marked complete.</returns>
+            public bool TryAdd(T item)
+            {
+                lock (this.lockObject)
+                {
+                    if (completed)
+                        return false;
+
+                    this.items.Add(item);
+                    return true;
+                }
+            }
+
+            /// <summary>
             /// Marks this list as complete. Any subsequent calls to <see cref="Add"/> will trigger an <see cref="InvalidOperationException"/>.
             /// </summary>
             public void CompleteAdding()
@@ -453,6 +603,22 @@ namespace VW
                 lock (this.lockObject)
                 {
                     this.completed = true;
+                }
+            }
+
+            /// <summary>
+            /// Atomically marks this list as complete and removes all elements.
+            /// </summary>
+            /// <returns>The elements removed.</returns>
+            public T[] CompleteAndRemoveAll()
+            {
+                lock (this.lockObject)
+                {
+                    this.completed = true;
+                    var ret = this.items.ToArray();
+                    this.items.Clear();
+
+                    return ret;
                 }
             }
 

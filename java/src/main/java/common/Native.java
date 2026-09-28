@@ -1,8 +1,5 @@
 package common;
 
-// TODO: Remove the hardcoded directory when loading the library, so that the
-// loader works cross-platform, but it doesn't support dependencies yet.
-
 import java.nio.file.*;
 import java.io.File;
 import java.io.IOException;
@@ -10,41 +7,62 @@ import java.util.jar.*;
 import java.util.*;
 
 public class Native {
+    // Delegated to NativePlatform, which has no static initialiser, so the mapping stays
+    // testable without a native library present. See NativePlatformTest.
+    private static final String PLATFORM_DIR =
+        NativePlatform.directory(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+    private static final String LIB_NAME =
+        NativePlatform.libraryName(System.getProperty("os.name", ""));
+
     private static void try_load_from_path() {
         System.loadLibrary("vw_jni");
     }
 
     private static void try_load_from_jar() throws IOException {
+        String nativesPrefix = "natives/" + PLATFORM_DIR + "/";
+
         // create temp directory
-            Path tempDirectory = Files.createTempDirectory("tmplibvw");
-            tempDirectory.toFile().deleteOnExit();
+        Path tempDirectory = Files.createTempDirectory("tmplibvw");
+        tempDirectory.toFile().deleteOnExit();
 
-            // Extract library and dependencies
-            File jarFile = new File(Native.class.getProtectionDomain().getCodeSource().getLocation().getPath());
-            JarFile jar = null;
-            try {
-                jar = new JarFile(jarFile);
-                Enumeration<JarEntry> entries = jar.entries();
-                while (entries.hasMoreElements()) {
-                    final String name = entries.nextElement().getName();
-                    if (name.endsWith("/"))
-                        continue;
+        // Extract library and dependencies
+        File jarFile = new File(Native.class.getProtectionDomain().getCodeSource().getLocation().getPath());
+        JarFile jar = null;
+        boolean foundLibrary = false;
+        try {
+            jar = new JarFile(jarFile);
+            Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                final String name = entries.nextElement().getName();
+                if (name.endsWith("/"))
+                    continue;
 
-                    if (name.startsWith("natives/linux_64/")) {
-                        Path parent = Paths.get(name).getParent();
-                        if (parent != null)
-                            Files.createDirectories(tempDirectory.resolve(parent));
-
-                        Files.copy(Native.class.getResourceAsStream("/" + name), tempDirectory.resolve(name));
+                if (name.startsWith(nativesPrefix)) {
+                    Path dest_file = tempDirectory.resolve(name);
+                    if (!dest_file.normalize().startsWith(tempDirectory)) {
+                        throw new RuntimeException("Bad zip entry");
                     }
-                }
-            } finally {
-                if (jar != null)
-                    jar.close();
-            }
+                    Path parent = dest_file.getParent();
+                    if (parent != null)
+                        Files.createDirectories(parent);
 
-            // load the library
-            System.load(tempDirectory.resolve("natives/linux_64/libvw_jni.so").toString());
+                    Files.copy(Native.class.getResourceAsStream("/" + name), dest_file);
+                    foundLibrary = true;
+                }
+            }
+        } finally {
+            if (jar != null)
+                jar.close();
+        }
+
+        if (!foundLibrary) {
+            throw new UnsupportedOperationException(
+                "No native library found for platform: " + PLATFORM_DIR +
+                ". Supported platforms can be found at https://vowpalwabbit.org/docs/vowpal_wabbit/java/");
+        }
+
+        // load the library
+        System.load(tempDirectory.resolve(nativesPrefix + LIB_NAME).toString());
     }
 
     static {

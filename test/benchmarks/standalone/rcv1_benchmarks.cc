@@ -1,16 +1,19 @@
+#include "../benchmarks_common.h"
+#include "vw/config/options_cli.h"
+#include "vw/core/memory.h"
+#include "vw/core/parse_primitives.h"
+#include "vw/core/vw.h"
+
 #include <benchmark/benchmark.h>
 
-#include <string>
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <string>
 
-#include "vw.h"
-#include "../benchmarks_common.h"
-
-static void benchmark_rcv1_dataset(benchmark::State& state, std::string command_line)
+static void benchmark_rcv1_dataset(benchmark::State& state, const std::string& command_line)
 {
-  auto vw = VW::initialize(command_line, nullptr, false, nullptr, nullptr);
-  std::vector<example*> examples;
+  auto vw = VW::initialize(VW::make_unique<VW::config::options_cli>(VW::split_command_line(command_line)));
+  std::vector<VW::example*> examples;
   examples.push_back(VW::read_example(*vw,
       std::string(
           "-1 |f 5:3.4770757e-02 21:5.2058056e-02 22:1.0131893e-01 66:9.8602206e-02 126:7.3677950e-02 "
@@ -5319,18 +5322,13 @@ static void benchmark_rcv1_dataset(benchmark::State& state, std::string command_
 
   for (auto _ : state)
   {
-    for (auto* example : examples)
-    {
-      vw->learn(*example);
-    }
+    for (auto* example : examples) { vw->learn(*example); }
 
     benchmark::ClobberMemory();
   }
 
   for (auto* example : examples) { vw->finish_example(*example); }
-
-  VW::finish(*vw);
 }
 
-BENCHMARK_CAPTURE(benchmark_rcv1_dataset, simple, "--quiet");
-BENCHMARK_CAPTURE(benchmark_rcv1_dataset, quadratic, "--quiet -q ::");
+BENCHMARK_CAPTURE(benchmark_rcv1_dataset, simple, "--quiet")->MinTime(15.0);
+BENCHMARK_CAPTURE(benchmark_rcv1_dataset, quadratic, "--quiet -q ::")->MinTime(15.0);

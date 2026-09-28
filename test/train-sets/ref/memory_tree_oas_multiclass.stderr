@@ -1,0 +1,35 @@
+predictions = memory_tree_oas_multiclass.predict
+tree initialization is done....
+max nodes 100
+tree size: 1
+max number of unique labels: 10
+learn at leaf: 0
+num of dream operations per example: 1
+current_pass: 0
+oas: 1
+memory_tree: max_nodes = 100 max_leaf_examples = 6 alpha = 0.1 oas = 1 online =0 
+using no cache
+Reading datafile = train-sets/multiclass
+num sources = 1
+Num weight bits = 7
+learning rate = 0.5
+initial_t = 0
+power_t = 0.5
+Enabled learners: gd, scorer-identity, memory_tree
+Input label = MULTILABEL
+Output pred = MULTILABELS
+average  since         example        example        current        current  current
+loss     last          counter         weight          label        predict features
+n.a.     n.a.                1            1.0        unknown         0.0000        2
+n.a.     n.a.                2            2.0        unknown         0.0000        2
+n.a.     n.a.                4            4.0        unknown        -0.9420        2
+depth 1
+n.a.     n.a.                8            8.0        unknown         0.0000        2
+######### Current Pass: 1, with number of memories stored so far: 10
+
+finished run
+number of examples = 10
+weighted example sum = 10.000000
+weighted label sum = 0.000000
+average loss = n.a.
+total feature number = 20

@@ -3,7 +3,7 @@
 // license as described in the file LICENSE.
 
 #include "vw_builder.h"
-#include "parser.h"
+#include "vw/core/parser.h"
 
 namespace VW
 {
@@ -66,7 +66,18 @@ VowpalWabbitNamespaceBuilder^ VowpalWabbitExampleBuilder::AddNamespace(Byte feat
 VowpalWabbitNamespaceBuilder::VowpalWabbitNamespaceBuilder(features* features,
     unsigned char index, example* example)
   : m_features(features), m_index(index), m_example(example)
-{
+{ // Register the namespace up front. Iteration over an example is driven entirely by example->indices,
+  // so features written into a group whose index is not yet registered are invisible to
+  // VW::setup_example (leaving their weight indices unscaled by the stride multiplier) and to
+  // VW::empty_example (leaking them into the next user of a pooled example). The finalizer drops the
+  // index again if nothing was added.
+  // Pass the native parameter rather than m_index: push_back takes a const reference, and a field of a
+  // managed class cannot bind to one.
+  for (unsigned char ns : m_example->indices)
+    if (ns == index)
+      return;
+
+  m_example->indices.push_back(index);
 }
 
 VowpalWabbitNamespaceBuilder::~VowpalWabbitNamespaceBuilder()
@@ -74,18 +85,25 @@ VowpalWabbitNamespaceBuilder::~VowpalWabbitNamespaceBuilder()
 }
 
 VowpalWabbitNamespaceBuilder::!VowpalWabbitNamespaceBuilder()
-{ if (m_features->size() > 0)
-  { unsigned char temp = m_index;
+{ // Multiple builders can be open on the same feature group at the same time, so reconcile against what
+  // the group actually holds rather than against what this builder contributed.
+  // temp is a native copy: push_back takes a const reference, and a field of a managed class cannot
+  // bind to one.
+  unsigned char temp = m_index;
+  bool has_features = m_features->size() > 0;
 
-    // avoid duplicate insertion
-    // can't check at the beginning, because multiple builders can be open
-    // at the same time
-    for (unsigned char ns : m_example->indices)
-      if (ns == temp)
-        return;
+  for (auto i = m_example->indices.begin(); i != m_example->indices.end(); i++)
+  { if (*i != temp)
+      continue;
 
-    m_example->indices.push_back(temp);
+    if (!has_features)
+      m_example->indices.erase(i);
+
+    return;
   }
+
+  if (has_features)
+    m_example->indices.push_back(temp);
 }
 
 void VowpalWabbitNamespaceBuilder::AddFeaturesUnchecked(uint64_t weight_index_base, float* begin, float* end)
@@ -93,7 +111,7 @@ void VowpalWabbitNamespaceBuilder::AddFeaturesUnchecked(uint64_t weight_index_ba
   { float x = *begin;
     if (x != 0)
     { m_features->values.push_back_unchecked(x);
-      m_features->indicies.push_back_unchecked(weight_index_base);
+      m_features->indices.push_back_unchecked(weight_index_base);
     }
     weight_index_base++;
   }
@@ -109,7 +127,7 @@ void VowpalWabbitNamespaceBuilder::AddFeature(uint64_t weight_index, float x)
 
 void VowpalWabbitNamespaceBuilder::PreAllocate(int size)
 { m_features->values.reserve(m_features->values.size() + size);
-  m_features->indicies.reserve(m_features->indicies.size() + size);
+  m_features->indices.reserve(m_features->indices.size() + size);
 }
 
 size_t VowpalWabbitNamespaceBuilder::FeatureCount::get()

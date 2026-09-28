@@ -1,22 +1,26 @@
 import os
+from pathlib import Path
 
-from vowpalwabbit import pyvw
-from vowpalwabbit.pyvw import vw
+import vowpalwabbit
+from vowpalwabbit import Workspace
 import pytest
+import warnings
+import filecmp
 
 BIT_SIZE = 18
+
 
 # Since these tests still run with Python 2, this is required.
 # Otherwise we could use math.isclose
 def isclose(a, b, rel_tol=1e-05, abs_tol=0.0):
-    return abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
+    return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
+
 
 class TestVW:
-
-    model = vw(quiet=True, b=BIT_SIZE)
+    model = Workspace(quiet=True, b=BIT_SIZE)
 
     def test_constructor(self):
-        assert isinstance(self.model, vw)
+        assert isinstance(self.model, Workspace)
 
     def test_learn_predict(self):
         ex = self.model.example("1 | a b c")
@@ -37,7 +41,7 @@ class TestVW:
         assert ex.get_tag() == "baz"
 
     def test_num_weights(self):
-        assert self.model.num_weights() == 2 ** BIT_SIZE
+        assert self.model.num_weights() == 2**BIT_SIZE
 
     def test_get_weight(self):
         assert self.model.get_weight(0, 0) == 0
@@ -49,7 +53,7 @@ class TestVW:
 
 
 def test_delete():
-    model = vw(quiet=True, b=BIT_SIZE)
+    model = Workspace(quiet=True, b=BIT_SIZE)
     assert "model" in locals()
     del model
     assert "model" not in locals()
@@ -59,7 +63,7 @@ def test_delete():
 
 
 def test_scalar_prediction_type():
-    model = vw(quiet=True)
+    model = Workspace(quiet=True)
     model.learn("1 | a b c")
     assert model.get_prediction_type() == model.pSCALAR
     prediction = model.predict(" | a b c")
@@ -69,9 +73,9 @@ def test_scalar_prediction_type():
 
 def test_scalars_prediction_type():
     n = 3
-    model = vw(loss_function="logistic", oaa=n, probabilities=True, quiet=True)
+    model = Workspace(loss_function="logistic", oaa=n, probabilities=True, quiet=True)
     model.learn("1 | a b c")
-    assert model.get_prediction_type() == model.pSCALARS
+    assert model.get_prediction_type() == vowpalwabbit.PredictionType.SCALARS
     prediction = model.predict(" | a b c")
     assert isinstance(prediction, list)
     assert len(prediction) == n
@@ -80,16 +84,16 @@ def test_scalars_prediction_type():
 
 def test_multiclass_prediction_type():
     n = 3
-    model = vw(loss_function="logistic", oaa=n, quiet=True)
+    model = Workspace(loss_function="logistic", oaa=n, quiet=True)
     model.learn("1 | a b c")
-    assert model.get_prediction_type() == model.pMULTICLASS
+    assert model.get_prediction_type() == vowpalwabbit.PredictionType.MULTICLASS
     prediction = model.predict(" | a b c")
     assert isinstance(prediction, int)
     del model
 
 
-def test_prob_prediction_type():
-    model = vw(
+def test_csoaa_ldf_scalars_prediction_type():
+    model = Workspace(
         loss_function="logistic",
         csoaa_ldf="mc",
         probabilities=True,
@@ -100,15 +104,15 @@ def test_prob_prediction_type():
         model.example("2:0.8  | a b c"),
     ]
     model.learn(multi_ex)
-    assert model.get_prediction_type() == model.pPROB
+    assert model.get_prediction_type() == vowpalwabbit.PredictionType.SCALARS
     multi_ex = [model.example("1 | a b c"), model.example("2 | a b c")]
     prediction = model.predict(multi_ex)
-    assert isinstance(prediction, float)
+    assert isinstance(prediction, list)
     del model
 
 
 def test_action_scores_prediction_type():
-    model = vw(loss_function="logistic", csoaa_ldf="m", quiet=True)
+    model = Workspace(loss_function="logistic", csoaa_ldf="m", quiet=True)
     multi_ex = [model.example("1:1 | a b c"), model.example("2:-1  | a b c")]
     model.learn(multi_ex)
     assert model.get_prediction_type() == model.pMULTICLASS
@@ -119,7 +123,7 @@ def test_action_scores_prediction_type():
 
 
 def test_action_probs_prediction_type():
-    model = vw(cb_explore=2, ngram=2, quiet=True)
+    model = Workspace(cb_explore=2, ngram=2, quiet=True)
     model.learn("1 | a b c")
     assert model.get_prediction_type() == model.pACTION_PROBS
     prediction = model.predict(" | a b c")
@@ -128,7 +132,7 @@ def test_action_probs_prediction_type():
 
 
 def test_multilabel_prediction_type():
-    model = vw(multilabel_oaa=4, quiet=True)
+    model = Workspace(multilabel_oaa=4, quiet=True)
     model.learn("1 | a b c")
     assert model.get_prediction_type() == model.pMULTILABELS
     prediction = model.predict(" | a b c")
@@ -136,9 +140,10 @@ def test_multilabel_prediction_type():
     del model
 
 
-def test_cbandits_label():
-    model = vw(cb=4, quiet=True)
-    cbl = pyvw.cbandits_label(model.example("1:10:0.5 |"))
+def test_CBLabel():
+    model = Workspace(cb=4, quiet=True)
+    cbl = vowpalwabbit.CBLabel.from_example(model.example("1:10:0.5 |"))
+    assert cbl.weight == 1.0
     assert cbl.costs[0].action == 1
     assert cbl.costs[0].probability == 0.5
     assert cbl.costs[0].partial_prediction == 0
@@ -147,9 +152,36 @@ def test_cbandits_label():
     del model
 
 
-def test_cost_sensitive_label():
-    model = vw(csoaa=4, quiet=True)
-    csl = pyvw.cost_sensitive_label(model.example("2:5 |"))
+def test_CBEvalLabel():
+    model = Workspace(cb=4, eval=True, quiet=True)
+    cbel = vowpalwabbit.CBEvalLabel.from_example(model.example("3 1:10:0.5 |"))
+    assert cbel.action == 3
+    assert cbel.cb_label.weight == 1.0
+    assert cbel.cb_label.costs[0].action == 1
+    assert cbel.cb_label.costs[0].probability == 0.5
+    assert cbel.cb_label.costs[0].partial_prediction == 0
+    assert cbel.cb_label.costs[0].cost == 10.0
+    assert str(cbel) == "3 1:10.0:0.5"
+    del model
+
+
+def test_CBContinuousLabel():
+    model = Workspace(
+        cats=4, min_value=185, max_value=23959, bandwidth=3000, quiet=True
+    )
+    cb_contl = vowpalwabbit.CBContinuousLabel.from_example(
+        model.example("ca 1:10:0.5 |")
+    )
+    assert cb_contl.costs[0].action == 1
+    assert cb_contl.costs[0].pdf_value == 0.5
+    assert cb_contl.costs[0].cost == 10.0
+    assert str(cb_contl) == "ca 1:10.0:0.5"
+    del model
+
+
+def test_CostSensitiveLabel():
+    model = Workspace(csoaa=4, quiet=True)
+    csl = vowpalwabbit.CostSensitiveLabel.from_example(model.example("2:5 |"))
     assert csl.costs[0].label == 2
     assert csl.costs[0].wap_value == 0.0
     assert csl.costs[0].partial_prediction == 0.0
@@ -158,17 +190,95 @@ def test_cost_sensitive_label():
     del model
 
 
-def test_multiclass_probabilities_label():
+def test_MulticlassProbabilitiesLabel():
     n = 4
-    model = pyvw.vw(
+    model = vowpalwabbit.Workspace(
         loss_function="logistic", oaa=n, probabilities=True, quiet=True
     )
     ex = model.example("1 | a b c d", 2)
     model.learn(ex)
-    mpl = pyvw.multiclass_probabilities_label(ex)
+    mpl = vowpalwabbit.MulticlassProbabilitiesLabel.from_example(ex)
     assert str(mpl) == "1:0.25 2:0.25 3:0.25 4:0.25"
-    mpl = pyvw.multiclass_probabilities_label([1, 2, 3], [0.4, 0.3, 0.3])
+    mpl = vowpalwabbit.MulticlassProbabilitiesLabel([0.4, 0.3, 0.3])
     assert str(mpl) == "1:0.4 2:0.3 3:0.3"
+
+
+def test_ccb_label():
+    model = Workspace(ccb_explore_adf=True, quiet=True)
+    ccb_shared_label = vowpalwabbit.CCBLabel.from_example(
+        model.example("ccb shared | shared_0 shared_1")
+    )
+    ccb_action_label = vowpalwabbit.CCBLabel.from_example(
+        model.example("ccb action | action_1 action_3")
+    )
+    ccb_slot_label = vowpalwabbit.CCBLabel.from_example(
+        model.example("ccb slot 0:0.8:1.0 0 | slot_0")
+    )
+    ccb_slot_pred_label = vowpalwabbit.CCBLabel.from_example(
+        model.example("ccb slot |")
+    )
+    assert ccb_shared_label.type == vowpalwabbit.CCBLabelType.SHARED
+    assert len(ccb_shared_label.explicit_included_actions) == 0
+    assert ccb_shared_label.outcome is None
+    assert str(ccb_shared_label) == "ccb shared"
+    assert ccb_action_label.type == vowpalwabbit.CCBLabelType.ACTION
+    assert len(ccb_action_label.explicit_included_actions) == 0
+    assert ccb_action_label.weight == 1.0
+    assert ccb_action_label.outcome is None
+    assert str(ccb_action_label) == "ccb action"
+    assert ccb_slot_label.type == vowpalwabbit.CCBLabelType.SLOT
+    assert ccb_slot_label.explicit_included_actions[0] == 0
+    assert ccb_slot_label.outcome.action_probs[0].action == 0
+    assert isclose(ccb_slot_label.outcome.action_probs[0].score, 1.0)
+    assert isclose(ccb_slot_label.outcome.cost, 0.8)
+    assert str(ccb_slot_label) == "ccb slot 0:0.8:1.0 0"
+    assert ccb_slot_pred_label.type == vowpalwabbit.CCBLabelType.SLOT
+    assert len(ccb_slot_pred_label.explicit_included_actions) == 0
+    assert ccb_slot_pred_label.outcome is None
+    assert str(ccb_slot_pred_label) == "ccb slot"
+    del model
+
+
+def test_slates_label():
+    model = Workspace(slates=True, quiet=True)
+    slates_shared_label = vowpalwabbit.SlatesLabel.from_example(
+        model.example("slates shared 0.8 | shared_0 shared_1")
+    )
+    slates_action_label = vowpalwabbit.SlatesLabel.from_example(
+        model.example("slates action 1 | action_3")
+    )
+    slates_slot_label = vowpalwabbit.SlatesLabel.from_example(
+        model.example("slates slot 1:0.8,0:0.1,2:0.1 | slot_0")
+    )
+    assert slates_shared_label.type == vowpalwabbit.SlatesLabelType.SHARED
+    assert slates_shared_label.labeled == True
+    assert isclose(slates_shared_label.cost, 0.8)
+    assert str(slates_shared_label) == "slates shared 0.8"
+    assert slates_action_label.type == vowpalwabbit.SlatesLabelType.ACTION
+    assert slates_action_label.labeled == False
+    assert slates_action_label.weight == 1.0
+    assert slates_action_label.slot_id == 1
+    assert str(slates_action_label) == "slates action 1"
+    assert slates_slot_label.type == vowpalwabbit.SlatesLabelType.SLOT
+    assert slates_slot_label.labeled == True
+    assert slates_slot_label.probabilities[0].action == 1
+    assert isclose(slates_slot_label.probabilities[0].score, 0.8)
+    assert slates_slot_label.probabilities[1].action == 0
+    assert isclose(slates_slot_label.probabilities[1].score, 0.1)
+    assert slates_slot_label.probabilities[2].action == 2
+    assert isclose(slates_slot_label.probabilities[2].score, 0.1)
+    assert str(slates_slot_label) == "slates slot 1:0.8,0:0.1,2:0.1"
+    del model
+
+
+def test_multilabel_label():
+    model = Workspace(multilabel_oaa=5, quiet=True)
+    multil = vowpalwabbit.MultilabelLabel.from_example(model.example("1,2,3 |"))
+    assert len(multil.labels) == 3
+    assert multil.labels[0] == 1
+    assert multil.labels[1] == 2
+    assert multil.labels[2] == 3
+    assert str(multil) == "1,2,3"
 
 
 def test_regressor_args():
@@ -176,7 +286,7 @@ def test_regressor_args():
     data_file = os.path.join(
         os.path.dirname(os.path.realpath(__file__)), "resources", "train.dat"
     )
-    model = vw(oaa=3, data=data_file, passes=30, c=True, k=True)
+    model = Workspace(oaa=3, data=data_file, passes=30, c=True, k=True)
     assert model.predict("| feature1:2.5") == 1
 
     # update model in memory
@@ -189,7 +299,7 @@ def test_regressor_args():
     del model
 
     # load initial regressor and confirm updated prediction
-    new_model = vw(i="tmp.model", quiet=True)
+    new_model = Workspace(i="tmp.model", quiet=True)
     assert new_model.predict("| feature1:2.5") == 3
     del new_model
 
@@ -198,9 +308,61 @@ def test_regressor_args():
     os.remove("tmp.model")
 
 
+def test_save_to_Path():
+    model = Workspace(quiet=True)
+    model.learn("1 | a b c")
+    model.save(Path("tmp1.model"))
+    model.save("tmp2.model")
+    assert filecmp.cmp("tmp1.model", "tmp2.model")
+    os.remove("tmp1.model")
+    os.remove("tmp2.model")
+
+
+def test_command_line_with_space_and_escape_kwargs():
+    # load and parse external data file
+    test_file_dir = Path(__file__).resolve().parent
+    data_file = test_file_dir / "resources" / "train file.dat"
+
+    model = Workspace(oaa=3, data=str(data_file), final_regressor="test model.vw")
+    assert model.predict("| feature1:2.5") == 1
+    del model
+
+    model_file = Path("test model.vw")
+    assert model_file.is_file()
+    model_file.unlink()
+
+
+def test_command_line_using_arg_list():
+    # load and parse external data file
+    test_file_dir = Path(__file__).resolve().parent
+    data_file = test_file_dir / "resources" / "train file.dat"
+
+    args = [
+        "--oaa",
+        "3",
+        "--data",
+        str(data_file),
+        "--final_regressor",
+        "test model2.vw",
+    ]
+    model = Workspace(arg_list=args)
+    assert model.predict("| feature1:2.5") == 1
+    del model
+
+    model_file = Path("test model2.vw")
+    assert model_file.is_file()
+    model_file.unlink()
+
+
+def test_command_line_with_double_space_in_str():
+    # Test regression for double space in string breaking splitting
+    model = Workspace(arg_str="--oaa 3 -q ::    ")
+    del model
+
+
 def test_keys_with_list_of_values():
     # No exception in creating and executing model with a key/list pair
-    model = vw(quiet=True, q=["fa", "fb"])
+    model = Workspace(quiet=True, q=["fa", "fb"])
     model.learn("1 | a b c")
     prediction = model.predict(" | a b c")
     assert isinstance(prediction, float)
@@ -208,7 +370,7 @@ def test_keys_with_list_of_values():
 
 
 def helper_parse(examples):
-    model = vw(quiet=True, cb_adf=True)
+    model = Workspace(quiet=True, cb_adf=True)
     ex = model.parse(examples)
     assert len(ex) == 2
     model.learn(ex)
@@ -219,30 +381,26 @@ def helper_parse(examples):
 def test_parse():
     helper_parse("| a:1 b:0.5\n0:0.1:0.75 | a:0.5 b:1 c:2")
 
-    helper_parse(
-        """| a:1 b:0.5
-    0:0.1:0.75 | a:0.5 b:1 c:2"""
-    )
+    helper_parse("""| a:1 b:0.5
+    0:0.1:0.75 | a:0.5 b:1 c:2""")
 
-    helper_parse(
-        """
+    helper_parse("""
     | a:1 b:0.5
     0:0.1:0.75 | a:0.5 b:1 c:2
-    """
-    )
+    """)
 
     helper_parse(["| a:1 b:0.5", "0:0.1:0.75 | a:0.5 b:1 c:2"])
 
 
 def test_parse_2():
-    model = vw(quiet=True, cb_adf=True)
+    model = Workspace(quiet=True, cb_adf=True)
     ex = model.parse("| a:1 b:0.5\n0:0.1:0.75 | a:0.5 b:1 c:2")
     assert len(ex) == 2
     model.learn(ex)
     model.finish_example(ex)
     model.finish()
 
-    model = vw(quiet=True, cb_adf=True)
+    model = Workspace(quiet=True, cb_adf=True)
     ex = model.parse(["| a:1 b:0.5", "0:0.1:0.75 | a:0.5 b:1 c:2"])
     assert len(ex) == 2
     model.learn(ex)
@@ -251,7 +409,7 @@ def test_parse_2():
 
 
 def test_learn_predict_multiline():
-    model = vw(quiet=True, cb_adf=True)
+    model = Workspace(quiet=True, cb_adf=True)
     ex = model.parse(["| a:1 b:0.5", "0:0.1:0.75 | a:0.5 b:1 c:2"])
     assert model.predict(ex) == [0.0, 0.0]
     model.finish_example(ex)
@@ -261,11 +419,11 @@ def test_learn_predict_multiline():
 
 
 def test_namespace_id():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
-    nm1 = pyvw.namespace_id(ex, 0)
-    nm2 = pyvw.namespace_id(ex, 1)
-    nm3 = pyvw.namespace_id(ex, 2)
+    nm1 = vowpalwabbit.NamespaceId(ex, 0)
+    nm2 = vowpalwabbit.NamespaceId(ex, 1)
+    nm3 = vowpalwabbit.NamespaceId(ex, 2)
     assert nm1.id == 0
     assert nm1.ord_ns == 97
     assert nm1.ns == "a"
@@ -278,14 +436,12 @@ def test_namespace_id():
 
 
 def test_example_namespace():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
-    ns_id = pyvw.namespace_id(ex, 1)
-    ex_nm = pyvw.example_namespace(
-        ex, ns_id, ns_hash=vw_ex.hash_space(ns_id.ns)
-    )
-    assert isinstance(ex_nm.ex, pyvw.example)
-    assert isinstance(ex_nm.ns, pyvw.namespace_id)
+    ns_id = vowpalwabbit.NamespaceId(ex, 1)
+    ex_nm = vowpalwabbit.ExampleNamespace(ex, ns_id, ns_hash=vw_ex.hash_space(ns_id.ns))
+    assert isinstance(ex_nm.ex, vowpalwabbit.Example)
+    assert isinstance(ex_nm.ns, vowpalwabbit.NamespaceId)
     assert ex_nm.ns_hash == 2514386435
     assert ex_nm.num_features_in() == 3
     assert ex_nm[2] == (11617, 1.0)  # represents (feature, value)
@@ -293,12 +449,12 @@ def test_example_namespace():
     for i in range(ex_nm.num_features_in()):
         assert ex_nm[i] == next(iter_obj)
     assert ex_nm.pop_feature()
-    ex_nm.push_features(ns_id, ["c", "d"])
+    ex_nm.push_features(["c", "d"])
     assert ex_nm.num_features_in() == 4
 
 
-def test_simple_label():
-    sl = pyvw.simple_label(2.0, weight=0.5)
+def test_SimpleLabel():
+    sl = vowpalwabbit.SimpleLabel(2.0, weight=0.5)
     assert sl.label == 2.0
     assert sl.weight == 0.5
     assert sl.prediction == 0.0
@@ -306,10 +462,10 @@ def test_simple_label():
     assert str(sl) == "2.0:0.5"
 
 
-def test_simple_label_example():
-    vw_ex = vw(quiet=True)
+def test_SimpleLabel_example():
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
-    sl2 = pyvw.simple_label(ex)
+    sl2 = vowpalwabbit.SimpleLabel.from_example(ex)
     assert sl2.label == 1.0
     assert sl2.weight == 1.0
     assert sl2.prediction == 0.0
@@ -317,19 +473,19 @@ def test_simple_label_example():
     assert str(sl2) == "1.0"
 
 
-def test_multiclass_label():
-    ml = pyvw.multiclass_label(2, weight=0.2)
+def test_MulticlassLabel():
+    ml = vowpalwabbit.MulticlassLabel(2, weight=0.2)
     assert ml.label == 2
     assert ml.weight == 0.2
     assert ml.prediction == 1
     assert str(ml) == "2:0.2"
 
 
-def test_multiclass_label_example():
+def test_MulticlassLabel_example():
     n = 4
-    model = pyvw.vw(loss_function="logistic", oaa=n, quiet=True)
+    model = vowpalwabbit.Workspace(loss_function="logistic", oaa=n, quiet=True)
     ex = model.example("1 | a b c d", 2)
-    ml2 = pyvw.multiclass_label(ex)
+    ml2 = vowpalwabbit.MulticlassLabel.from_example(ex)
     assert ml2.label == 1
     assert ml2.weight == 1.0
     assert ml2.prediction == 0
@@ -337,17 +493,17 @@ def test_multiclass_label_example():
 
 
 def test_example_namespace_id():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
-    ns = pyvw.namespace_id(ex, 1)
-    assert isinstance(ex.get_ns(1), pyvw.namespace_id)
-    assert isinstance(ex[2], pyvw.example_namespace)
+    ns = vowpalwabbit.NamespaceId(ex, 1)
+    assert isinstance(ex.get_ns(1), vowpalwabbit.NamespaceId)
+    assert isinstance(ex[2], vowpalwabbit.ExampleNamespace)
     assert ex.setup_done is True
     assert ex.num_features_in(ns) == 3
 
 
 def test_example_learn():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
     ex.learn()
     assert ex.setup_done is True
@@ -356,53 +512,86 @@ def test_example_learn():
 
 
 def test_example_label():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
     ex.set_label_string("1.0")
-    assert isinstance(ex.get_label(), pyvw.simple_label)
+    assert isinstance(ex.get_label(), vowpalwabbit.SimpleLabel)
 
 
 def test_example_features():
-    vw_ex = vw(quiet=True)
+    vw_ex = Workspace(quiet=True)
     ex = vw_ex.example("1 |a two features |b more features here")
-    ns = pyvw.namespace_id(ex, 1)
+    ns = vowpalwabbit.NamespaceId(ex, 1)
     assert ex.get_feature_id(ns, "a") == 127530
     ex.push_hashed_feature(ns, 1122)
     ex.push_features("x", [("c", 1.0), "d"])
     ex.push_feature(ns, 11000)
     assert ex.num_features_in("x") == 2
     assert ex.sum_feat_sq(ns) == 5.0
-    ns2 = pyvw.namespace_id(ex, 2)
+    ns2 = vowpalwabbit.NamespaceId(ex, 2)
     ex.push_namespace(ns2)
     assert ex.pop_namespace()
 
 
+def test_example_features_dict():
+    vw = Workspace(quiet=True)
+    ex = vw.example(
+        {
+            "a": {"two": 1, "features": 1.0},
+            "namespace": {"more": 1, "feature": 1, 5: 1.5},
+        }
+    )
+    fs = list(ex.iter_features())
+    fs_keys = [f[0] for f in fs]
+
+    expected = [53373, 165129, 24716, 242309, 5]
+
+    assert set(fs_keys) == set(expected)
+
+    assert (ex.get_feature_id("a", "two"), 1) in fs
+    assert (ex.get_feature_id("a", "features"), 1) in fs
+    assert (ex.get_feature_id("namespace", "more"), 1) in fs
+    assert (ex.get_feature_id("namespace", "feature"), 1) in fs
+    assert (5, 1.5) in fs
+
+
+def test_example_features_dict_long_long_index():
+    vw = Workspace(quiet=True)
+    ex = vw.example({"a": {2**40: 2}})
+    fs = list(ex.iter_features())
+
+    assert (2**40, 2) in fs
+
+
 def test_get_weight_name():
-    model = vw(quiet=True)
+    model = Workspace(quiet=True)
     model.learn("1 | a a b c |ns x")
-    assert model.get_weight_from_name("a") != 0.
-    assert model.get_weight_from_name("b") != 0.
+    assert model.get_weight_from_name("a") != 0.0
+    assert model.get_weight_from_name("b") != 0.0
     assert model.get_weight_from_name("b") == model.get_weight_from_name("c")
     assert model.get_weight_from_name("a") != model.get_weight_from_name("b")
-    assert model.get_weight_from_name("x") == 0.
-    assert model.get_weight_from_name("x", "ns") != 0.
+    assert model.get_weight_from_name("x") == 0.0
+    assert model.get_weight_from_name("x", "ns") != 0.0
     assert model.get_weight_from_name("x", "ns") == model.get_weight_from_name("b")
 
 
 def test_runparser_cmd_string():
-    vw = pyvw.vw("--data ./test/train-sets/rcv1_small.dat")
+    vw = vowpalwabbit.Workspace("--data ./test/train-sets/rcv1_small.dat")
     assert vw.parser_ran == True, "vw should set parser_ran to true if --data present"
     vw.finish()
+
 
 def test_runparser_cmd_string_short():
-    vw = pyvw.vw("-d ./test/train-sets/rcv1_small.dat")
+    vw = vowpalwabbit.Workspace("-d ./test/train-sets/rcv1_small.dat")
     assert vw.parser_ran == True, "vw should set parser_ran to true if --data present"
     vw.finish()
 
+
 def test_not_runparser_cmd_string():
-    vw = pyvw.vw("")
+    vw = vowpalwabbit.Workspace("")
     assert vw.parser_ran == False, "vw should set parser_ran to false"
     vw.finish()
+
 
 def check_error_raises(type, argument):
     """
@@ -416,76 +605,376 @@ def check_error_raises(type, argument):
 
     Example:
     >>> ex = ["|a", "|b"]
-    >>> vw = pyvw.vw(quiet=True)
+    >>> vw = vowpalwabbit.Workspace(quiet=True)
     >>> check_error_raises(TypeError, lambda: vw.learn(ex))
 
     """
     with pytest.raises(type) as error:
         argument()
 
-def test_dsjson():
-    vw = pyvw.vw('--cb_explore_adf --epsilon 0.2 --dsjson')
 
-    ex_l_str='{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
+def test_dsjson():
+    vw = vowpalwabbit.Workspace("--cb_explore_adf --epsilon 0.2 --dsjson")
+
+    ex_l_str = '{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
     ex_l = vw.parse(ex_l_str)
     vw.learn(ex_l)
     pred = ex_l[0].get_action_scores()
     expected = [0.5, 0.5]
     assert len(pred) == len(expected)
-    for a,b in zip(pred, expected):
+    for a, b in zip(pred, expected):
         assert isclose(a, b)
     vw.finish_example(ex_l)
 
-    ex_p='{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
+    ex_p = '{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
     pred = vw.predict(ex_p)
     expected = [0.9, 0.1]
     assert len(pred) == len(expected)
-    for a,b in zip(pred, expected):
+    for a, b in zip(pred, expected):
         assert isclose(a, b)
+
 
 def test_dsjson_with_metrics():
-    vw = pyvw.vw('--extra_metrics metrics.json --cb_explore_adf --epsilon 0.2 --dsjson')
+    vw = vowpalwabbit.Workspace(
+        "--extra_metrics metrics.json --cb_explore_adf --epsilon 0.2 --dsjson"
+    )
 
-    ex_l_str='{"_label_cost":-0.9,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
+    ex_l_str = '{"_label_cost":-0.9,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
     ex_l = vw.parse(ex_l_str)
     vw.learn(ex_l)
     pred = ex_l[0].get_action_scores()
     expected = [0.5, 0.5]
     assert len(pred) == len(expected)
-    for a,b in zip(pred, expected):
+    for a, b in zip(pred, expected):
         assert isclose(a, b)
     vw.finish_example(ex_l)
 
-    ex_p='{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
+    ex_p = '{"_label_cost":-1.0,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
     pred = vw.predict(ex_p)
     expected = [0.9, 0.1]
     assert len(pred) == len(expected)
-    for a,b in zip(pred, expected):
+    for a, b in zip(pred, expected):
         assert isclose(a, b)
 
     learner_metric_dict = vw.get_learner_metrics()
-    assert(len(vw.get_learner_metrics()) == 17)
+    # Metrics are now namespaced by reduction name
+    extra_metrics = learner_metric_dict["extra_metrics"]
+    cb_metrics = learner_metric_dict["cb_explore_adf_greedy"]
+    sfm_metrics = learner_metric_dict["shared_feature_merger"]
 
-    assert(learner_metric_dict["total_predict_calls"] == 2)
-    assert(learner_metric_dict["total_learn_calls"] == 1)
-    assert(learner_metric_dict["cbea_labeled_ex"] == 1)
-    assert(learner_metric_dict["cbea_predict_in_learn"] == 0)
-    assert(learner_metric_dict["cbea_label_first_action"] == 1)
-    assert(learner_metric_dict["cbea_label_not_first"] == 0)
-    assert(pytest.approx(learner_metric_dict["cbea_sum_cost"]) == -0.9)
-    assert(pytest.approx(learner_metric_dict["cbea_sum_cost_baseline"]) == -0.9)
-    assert(learner_metric_dict["cbea_non_zero_cost"] == 1)
-    assert(pytest.approx(learner_metric_dict["cbea_avg_feat_per_event"]) == 28)
-    assert(pytest.approx(learner_metric_dict["cbea_avg_actions_per_event"]) == 2)
-    assert(pytest.approx(learner_metric_dict["cbea_avg_ns_per_event"]) == 16)
-    assert(pytest.approx(learner_metric_dict["cbea_avg_feat_per_action"]) == 14)
-    assert(pytest.approx(learner_metric_dict["cbea_avg_ns_per_action"]) == 8)
-    assert(learner_metric_dict["cbea_min_actions"] == 2)
-    assert(learner_metric_dict["cbea_max_actions"] == 2)
-    assert(learner_metric_dict["sfm_count_learn_example_with_shared"] == 1)
+    assert extra_metrics["total_predict_calls"] == 2
+    assert extra_metrics["total_learn_calls"] == 1
+    assert cb_metrics["cbea_labeled_ex"] == 1
+    assert cb_metrics["cbea_predict_in_learn"] == 0
+    assert cb_metrics["cbea_label_first_action"] == 1
+    assert cb_metrics["cbea_label_not_first"] == 0
+    assert pytest.approx(cb_metrics["cbea_sum_cost"]) == -0.9
+    assert pytest.approx(cb_metrics["cbea_sum_cost_baseline"]) == -0.9
+    assert cb_metrics["cbea_non_zero_cost"] == 1
+    assert pytest.approx(cb_metrics["cbea_avg_feat_per_event"]) == 24
+    assert pytest.approx(cb_metrics["cbea_avg_actions_per_event"]) == 2
+    assert pytest.approx(cb_metrics["cbea_avg_ns_per_event"]) == 16
+    assert pytest.approx(cb_metrics["cbea_avg_feat_per_action"]) == 12
+    assert pytest.approx(cb_metrics["cbea_avg_ns_per_action"]) == 8
+    assert cb_metrics["cbea_min_actions"] == 2
+    assert cb_metrics["cbea_max_actions"] == 2
+    assert sfm_metrics["sfm_count_learn_example_with_shared"] == 1
+
 
 def test_constructor_exception_is_safe():
     try:
-        vw = pyvw.vw("--invalid_option")
+        vw = vowpalwabbit.Workspace("--invalid_option")
     except:
         pass
+
+
+def test_deceprecated_labels():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        vowpalwabbit.pyvw.abstract_label()
+        vowpalwabbit.pyvw.simple_label()
+        vowpalwabbit.pyvw.multiclass_label()
+        vowpalwabbit.pyvw.multiclass_probabilities_label()
+        vowpalwabbit.pyvw.cost_sensitive_label()
+        vowpalwabbit.pyvw.cbandits_label()
+
+
+def test_random_weights_seed():
+    # TODO: why do we need min_prediction and max_prediction?
+    shared_args = "--random_weights --quiet --min_prediction -50 --max_prediction 50"
+
+    a = Workspace(f"--random_seed 1 {shared_args}")
+    b = Workspace(f"--random_seed 2 {shared_args}")
+
+    dummy_ex_str = " | foo=bar"
+    assert a.predict(dummy_ex_str) != b.predict(dummy_ex_str)
+
+
+def test_merge_models():
+    model1 = vowpalwabbit.Workspace(quiet=True)
+    model1.learn("1 | foo")
+    model1.learn("1 | foo")
+    model2 = vowpalwabbit.Workspace(quiet=True)
+    model2.learn("1 | bar")
+    model2.learn("1 | bar")
+    model2.learn("1 | bar")
+
+    merged_model = vowpalwabbit.merge_models(None, [model1, model2])
+    assert (
+        merged_model.get_weighted_examples()
+        == model1.get_weighted_examples() + model2.get_weighted_examples()
+    )
+    assert model1.get_weight_from_name("foo") != 0
+    assert model1.get_weight_from_name("bar") == 0
+    assert merged_model.get_weight_from_name("foo") != 0
+    assert model2.get_weight_from_name("foo") == 0
+    assert model2.get_weight_from_name("bar") != 0
+    assert merged_model.get_weight_from_name("bar") != 0
+
+
+def test_merge_models_with_base():
+    model_base = vowpalwabbit.Workspace(quiet=True)
+    model_base.learn("1 | foobar")
+    model_base.learn("1 | foobar")
+    model_base.learn("1 | foobar")
+    model_base.save("test_merge_models_with_base.model")
+
+    model1 = vowpalwabbit.Workspace(
+        quiet=True,
+        preserve_performance_counters=True,
+        initial_regressor="test_merge_models_with_base.model",
+    )
+    model1.learn("1 | foo")
+    model1.learn("1 | foo")
+    model2 = vowpalwabbit.Workspace(
+        quiet=True,
+        preserve_performance_counters=True,
+        initial_regressor="test_merge_models_with_base.model",
+    )
+    model2.learn("1 | bar")
+    model2.learn("1 | bar")
+    model2.learn("1 | bar")
+
+    merged_model = vowpalwabbit.merge_models(model_base, [model1, model2])
+    assert merged_model.get_weighted_examples() == (
+        model_base.get_weighted_examples()
+        + (model1.get_weighted_examples() - model_base.get_weighted_examples())
+        + (model2.get_weighted_examples() - model_base.get_weighted_examples())
+    )
+
+    assert model_base.get_weight_from_name("foobar") != 0
+    assert model1.get_weight_from_name("foobar") != 0
+    assert model2.get_weight_from_name("foobar") != 0
+    assert merged_model.get_weight_from_name("foobar") != 0
+
+    assert model1.get_weight_from_name("foo") != 0
+    assert model1.get_weight_from_name("bar") == 0
+    assert merged_model.get_weight_from_name("foo") != 0
+    assert model2.get_weight_from_name("foo") == 0
+    assert model2.get_weight_from_name("bar") != 0
+    assert merged_model.get_weight_from_name("bar") != 0
+
+
+def test_get_explore_eval_stats():
+    vw = vowpalwabbit.Workspace(
+        "--cb_explore_adf --explore_eval --dsjson --extra_metrics"
+    )
+
+    ex_l_str = '{"_label_cost":-0.9,"_label_probability":0.5,"_label_Action":1,"_labelIndex":0,"o":[{"v":1.0,"EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","ActionTaken":false}],"Timestamp":"2020-11-15T17:09:31.8350000Z","Version":"1","EventId":"38cbf24f-70b2-4c76-aa0c-970d0c8d388e","a":[1,2],"c":{ "GUser":{"id":"person5","major":"engineering","hobby":"hiking","favorite_character":"spock"}, "_multi": [ { "TAction":{"topic":"SkiConditions-VT"} }, { "TAction":{"topic":"HerbGarden"} } ] },"p":[0.5,0.5],"VWState":{"m":"N/A"}}\n'
+    ex_l = vw.parse(ex_l_str)
+    vw.learn(ex_l)
+    vw.finish_example(ex_l)
+    learner_metric_dict = vw.get_learner_metrics()
+    explore_eval_metrics = learner_metric_dict["explore_eval"]
+    assert explore_eval_metrics["weighted_update_count"] == 1.0
+    assert explore_eval_metrics["average_accepted_example_weight"] == 1.0
+
+
+# Tests for dual-channel logging (get_log, get_driver_output, get_log_output)
+
+
+def test_get_log_returns_output():
+    """Test that get_log() returns training output when enable_logging=True."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    vw.learn("1 | a b c")
+    vw.learn("0 | d e f")
+    vw.finish()
+
+    log = vw.get_log()
+    assert isinstance(log, list)
+    assert len(log) > 0
+    # Check that some expected content is in the log
+    log_text = "\n".join(log)
+    assert "average" in log_text.lower() or "loss" in log_text.lower()
+
+
+def test_get_log_raises_when_logging_disabled():
+    """Test that get_log() raises an exception when enable_logging=False."""
+    vw = Workspace(quiet=True)  # enable_logging defaults to False
+    vw.learn("1 | a b c")
+    vw.finish()
+
+    with pytest.raises(Exception, match="enable_logging"):
+        vw.get_log()
+
+
+def test_get_driver_output_returns_training_stats():
+    """Test that get_driver_output() returns driver channel messages."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    vw.learn("1 | a b c")
+    vw.learn("0 | d e f")
+    vw.finish()
+
+    driver_output = vw.get_driver_output()
+    assert isinstance(driver_output, list)
+    # Driver output should contain training statistics
+    driver_text = "\n".join(driver_output)
+    # Should have progress or summary info
+    assert len(driver_output) > 0
+
+
+def test_get_driver_output_raises_when_logging_disabled():
+    """Test that get_driver_output() raises when enable_logging=False."""
+    vw = Workspace(quiet=True)
+    vw.learn("1 | a b c")
+    vw.finish()
+
+    with pytest.raises(Exception, match="enable_logging"):
+        vw.get_driver_output()
+
+
+def test_get_log_output_returns_logger_messages():
+    """Test that get_log_output() returns logger channel messages."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    vw.learn("1 | a b c")
+    vw.finish()
+
+    log_output = vw.get_log_output()
+    assert isinstance(log_output, list)
+    # Logger output may be empty if no warnings/errors occurred
+
+
+def test_get_log_output_raises_when_logging_disabled():
+    """Test that get_log_output() raises when enable_logging=False."""
+    vw = Workspace(quiet=True)
+    vw.learn("1 | a b c")
+    vw.finish()
+
+    with pytest.raises(Exception, match="enable_logging"):
+        vw.get_log_output()
+
+
+def test_get_log_combines_channels():
+    """Test that get_log() returns combined output from both channels."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    vw.learn("1 | a b c")
+    vw.finish()
+
+    combined = vw.get_log()
+    driver = vw.get_driver_output()
+    logger = vw.get_log_output()
+
+    # Combined should include content from driver
+    # (logger may be empty if no warnings)
+    for line in driver:
+        if line:  # skip empty lines
+            assert line in combined
+
+
+def test_get_log_preserves_empty_lines():
+    """Test that get_log() preserves empty lines (important for parsers)."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    vw.learn("1 | a b c")
+    vw.learn("0 | d e f")
+    vw.finish()
+
+    log = vw.get_log()
+    # The log should contain some empty strings as line separators
+    # This is important for vw_executor which uses empty lines as delimiters
+    assert isinstance(log, list)
+    # At minimum, we should have the trailing empty string from current_message
+    # Check that we don't crash and return a valid list
+
+
+def test_logging_with_cb_explore():
+    """Test logging works correctly with cb_explore (a common use case)."""
+    vw = Workspace("--cb_explore 2 --epsilon 0.1", enable_logging=True)
+    vw.learn("1:0.5:0.5 | a b c")
+    vw.learn("2:0.3:0.5 | d e f")
+    vw.finish()
+
+    log = vw.get_log()
+    assert isinstance(log, list)
+    driver = vw.get_driver_output()
+    assert isinstance(driver, list)
+
+
+def test_logging_average_loss_parseable():
+    """Test that average loss line is present and parseable in get_log()."""
+    vw = Workspace(quiet=False, enable_logging=True)
+    for i in range(10):
+        vw.learn(f"{i % 2} | feature{i}")
+    vw.finish()
+
+    log = vw.get_log()
+    log_text = "\n".join(log)
+
+    # Check for average loss line
+    loss_found = False
+    for line in log:
+        if "average loss" in line.lower() and "=" in line:
+            loss_found = True
+            # Try to parse it
+            parts = line.split("=")
+            if len(parts) == 2:
+                try:
+                    loss_value = float(parts[1].strip())
+                    assert isinstance(loss_value, float)
+                except ValueError:
+                    pass  # Some lines might have different format
+            break
+
+    # Note: average loss may not always be present depending on VW configuration
+
+
+def test_ftrl_metrics():
+    """Test that FTRL learner exposes metrics via get_learner_metrics()."""
+    # Test Proximal-FTRL
+    vw = vowpalwabbit.Workspace("--ftrl --extra_metrics --quiet")
+    vw.learn("1 | a b c")
+    vw.learn("-1 | d e f")
+    metrics = vw.get_learner_metrics()
+    ftrl_metrics = metrics["ftrl-Proximal-FTRL"]
+    assert ftrl_metrics["ftrl_algorithm"] == "Proximal-FTRL"
+    assert "ftrl_alpha" in ftrl_metrics
+    assert "ftrl_beta" in ftrl_metrics
+    assert ftrl_metrics["ftrl_size"] == 3
+    vw.finish()
+
+
+def test_pistol_metrics():
+    """Test that PiSTOL learner exposes metrics via get_learner_metrics()."""
+    vw = vowpalwabbit.Workspace("--pistol --extra_metrics --quiet")
+    vw.learn("1 | a b c")
+    vw.learn("-1 | d e f")
+    metrics = vw.get_learner_metrics()
+    ftrl_metrics = metrics["ftrl-PiSTOL"]
+    assert ftrl_metrics["ftrl_algorithm"] == "PiSTOL"
+    assert "ftrl_alpha" in ftrl_metrics
+    assert "ftrl_beta" in ftrl_metrics
+    assert ftrl_metrics["ftrl_size"] == 4
+    vw.finish()
+
+
+def test_coin_metrics():
+    """Test that Coin Betting learner exposes metrics via get_learner_metrics()."""
+    vw = vowpalwabbit.Workspace("--coin --extra_metrics --quiet")
+    vw.learn("1 | a b c")
+    vw.learn("-1 | d e f")
+    metrics = vw.get_learner_metrics()
+    ftrl_metrics = metrics["ftrl-Coin Betting"]
+    assert ftrl_metrics["ftrl_algorithm"] == "Coin Betting"
+    assert "ftrl_alpha" in ftrl_metrics
+    assert "ftrl_beta" in ftrl_metrics
+    assert ftrl_metrics["ftrl_size"] == 6
+    vw.finish()

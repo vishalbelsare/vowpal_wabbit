@@ -1,39 +1,62 @@
 name: Windows / C++ - CMake only
 
 on:
-  push:
-    branches:
-      - master
-      - 'releases/**'
-  pull_request:
-    branches:
-      - '*'
+  # only run on explicit user request, since this build is duplicated by the vcpkg builds
+  workflow_dispatch
+  # push:
+  #   branches:
+  #     - master
+  #     - 'releases/**'
+  # pull_request:
+  #   branches:
+  #     - '*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   check:
-    runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         build_config: ["Debug", "Release"]
+        os: ["windows-latest"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     env:
       CMAKE_BUILD_DIR: ${{ github.workspace }}/vw/build
       SOURCE_DIR: ${{ github.workspace }}/vw
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      # 2020.11-1
-      VCPKG_REF: ec6fe06e8da05a8157dc8581fa96b36b571c1bd5
+      VCPKG_ROOT: ${{ github.workspace }}/vw/ext_libs/vcpkg
+      VCPKG_REF: 25b458671af03578e6a34edd8f0d1ac85e084df4
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
           path: 'vw'
-          submodules: true
-      - uses: actions/checkout@v2
-        with:
-          path: 'vcpkg'
-          repository: 'microsoft/vcpkg'
-          ref: ${{ env.VCPKG_REF }}
+          submodules: false
+
+      - name: Init submodules with retry
+        shell: bash
+        working-directory: vw
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          for attempt in 1 2 3 4 5; do
+            if git submodule update --init --recursive; then
+              echo "Submodule init succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "Submodule init failed after 5 attempts"
+          exit 1
       - name: Restore vcpkg and build artifacts
-        uses: actions/cache@v2
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ env.VCPKG_ROOT }}/installed/
@@ -42,23 +65,20 @@ jobs:
             !${{ env.VCPKG_ROOT }}/packages
             !${{ env.VCPKG_ROOT }}/downloads
           key: |
-            ${{ env.VCPKG_REF }}-vcpkg-cache-invalidate-0
-      # Downgrade CMake to mitigate crashing issue introduced in 3.21 that only affects vcpkg. See here: https://github.com/microsoft/vcpkg/issues/18718
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v1.9
-        with:
-          cmake-version: '3.20.x'
-      - uses: ilammy/msvc-dev-cmd@v1
-      - name: Bootstrap vcpkg
-        run: ${{ env.VCPKG_ROOT }}/bootstrap-vcpkg.bat
-      - name: Install vcpkg dependencies
-        run: ${{ env.VCPKG_ROOT }}/vcpkg.exe --triplet x64-windows install zlib boost-system boost-program-options boost-test boost-align boost-foreach boost-math flatbuffers
+            ${{ env.VCPKG_REF }}-${{ matrix.os }}-vcpkg-cache-invalidate-1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Vcpkg install
+        run: |
+          $env:VCPKG_ROOT = "${{ github.workspace }}/vw/ext_libs/vcpkg"
+          echo "VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
+          & "$env:VCPKG_ROOT\vcpkg.exe" --triplet x64-windows install zlib flatbuffers
       - name: Generate project files
         run: |
-          cmake -S "${{ env.SOURCE_DIR }}" -B "${{ env.CMAKE_BUILD_DIR }}" -G "Visual Studio 16 2019" -A "x64" -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake" -DUSE_LATEST_STD=On -DBUILD_FLATBUFFERS=On -Dvw_BUILD_NET_FRAMEWORK=On
+          cmake -S "$env:SOURCE_DIR" -B "$env:CMAKE_BUILD_DIR" -A "x64" -DVCPKG_MANIFEST_MODE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVW_FEAT_FLATBUFFERS=On -DVW_FEAT_CSV=On -DVW_FEAT_CB_GRAPH_FEEDBACK=On -Dvw_BUILD_NET_FRAMEWORK=On
       - name: Build project
         run: |
-          cmake --build "${{ env.CMAKE_BUILD_DIR }}" --config ${{ matrix.build_config }}
+          cmake --build "$env:CMAKE_BUILD_DIR" --config ${{ matrix.build_config }} --verbose
       - name: Run tests
-        run: |
-          cmake --build "${{ env.CMAKE_BUILD_DIR }}" --config ${{ matrix.build_config }} --target test_with_output
+        working-directory: ${{ env.CMAKE_BUILD_DIR }}
+        run: ctest --output-on-failure --no-tests=error --label-regex VWTestList --build-config ${{ matrix.build_config }}

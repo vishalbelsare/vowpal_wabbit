@@ -1,12 +1,11 @@
 # Examples
 
-A sample chapter, there's no content here, just a placeholder to demo the navbar.
-
 ```{toctree}
 :maxdepth: 1
 
 basics
 contextual_bandit
+epsilon_decay
 mini_vw
 poisson_regression
 predict

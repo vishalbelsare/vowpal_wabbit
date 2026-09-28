@@ -1,10 +1,11 @@
 import copy
 import os
 import os.path
+import shlex
 import subprocess
 from pathlib import Path
 import re
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from run_tests_common import TestData
 
@@ -13,16 +14,25 @@ def remove_first_arg(command_line: str) -> str:
     return " ".join(command_line.split()[1:])
 
 
+def is_input_data_file(input_file):
+    return "train-set" in input_file or "test-set" in input_file
+
+
 class FlatbufferTest:
     def __init__(
-        self, test: TestData, working_dir, depends_on_test: Optional[TestData] = None
+        self,
+        test: TestData,
+        working_dir,
+        ref_dir: Path,
+        depends_on_test: Optional[TestData] = None,
     ):
         self.test = test
         self.working_dir = working_dir
+        self.ref_dir = ref_dir
         self.stashed_input_files = copy.copy(self.test.input_files)
         self.stashed_vw_command = copy.copy(self.test.command_line)
         self.test_id = str(self.test.id)
-        self.files_to_be_converted = []
+        self.files_to_be_converted: List[Tuple[int, str, str]] = []
         self.depends_on_cmd = (
             copy.copy(depends_on_test.stashed_command_line)
             if (depends_on_test is not None)
@@ -40,15 +50,12 @@ class FlatbufferTest:
             if flags:
                 command = re.sub(tag, "", command)
             else:
-                command = re.sub("{} [:a-zA-Z0-9_.\-/]*".format(tag), "", command)
+                command = re.sub(r"{} [:a-zA-Z0-9_.\-/]*".format(tag), "", command)
         return command
-
-    def change_input_file(self, input_file):
-        return "train-set" in input_file or "test-set" in input_file
 
     def get_flatbuffer_file_names(self):
         for i, input_file in enumerate(self.test.input_files):
-            if self.change_input_file(input_file):
+            if is_input_data_file(input_file):
                 file_basename = os.path.basename(input_file)
                 fb_file = "".join([file_basename, ".fb"])
                 fb_file_full_path = self.working_dir.joinpath(
@@ -71,15 +78,11 @@ class FlatbufferTest:
                     os.path.basename(str(self.working_dir.joinpath(stderr_file)))
                 )
             )
-            with open(stderr_file, "r") as f, open(stderr_test_file, "w") as tmp_f:
+            with open(self.ref_dir / stderr_file, "r") as f, open(
+                stderr_test_file, "w"
+            ) as tmp_f:
                 contents = [self.replace_line(line) for line in f]
                 for line in contents:
-                    if (
-                        "--dsjson" in self.stashed_vw_command
-                        and "WARNING: Old string feature value behavior is deprecated in JSON/DSJSON"
-                        in line
-                    ):
-                        continue
                     tmp_f.write(line)
 
             self.test.comparison_files["stderr"] = str(stderr_test_file)
@@ -91,7 +94,13 @@ class FlatbufferTest:
 
     def convert(self, to_flatbuff, color_enum):
         # arguments and flats not supported or needed in flatbuffer conversion
-        flags_to_remove = ["-c ", "--bfgs", "--onethread", "-t ", "--search_span_bilou"]
+        flags_to_remove = [
+            "-c ",
+            "--bfgs",
+            "--onethread",
+            "-t ",
+            "--search_span_bilou",
+        ]
         arguments_to_remove = [
             "--passes",
             "--ngram",
@@ -128,10 +137,11 @@ class FlatbufferTest:
         for i, from_file, to_file in self.files_to_be_converted:
             # replace depends_on filename with our filename, will do nothing if no depends_on
             to_flatbuff_command = re.sub(
-                "{} [:a-zA-Z0-9_.\-/]*".format("-d"),
-                "-d {} ".format(from_file),
+                r"{} [:a-zA-Z0-9_.\-/]*".format("-d"),
+                "",
                 to_flatbuff_command,
             )
+            to_flatbuff_command = f"-d {from_file} " + to_flatbuff_command
 
             cmd = "{} {} {} {}".format(
                 to_flatbuff, to_flatbuff_command, "--fb_out", to_file
@@ -143,7 +153,12 @@ class FlatbufferTest:
                     color_enum.LIGHT_PURPLE, self.test_id, cmd, color_enum.ENDC
                 )
             )
-            result = subprocess.run(cmd, shell=True, check=True)
+            result = subprocess.run(
+                shlex.split(cmd),
+                cwd=self.ref_dir,
+                capture_output=True,
+                text=True,
+            )
             if result.returncode != 0:
                 raise RuntimeError(
                     "Generating flatbuffer file failed with {} {} {}".format(

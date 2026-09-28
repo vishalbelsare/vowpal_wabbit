@@ -1,3 +1,4 @@
+build/
 Makefile.in
 cluster/Makefile.in
 cluster/Makefile
@@ -44,7 +45,6 @@ test/topk.model
 .libs
 .deps
 autom4te.cache/
-vowpalwabbit/active_interactor
 vowpalwabbit/vw
 cluster/spanning_tree
 *.d
@@ -152,3 +152,19 @@ vowpalwabbit/parser/flatbuffer/generated/example_generated.h
 #Test stderr/predict files
 test/flatbuffer/*.predict
 test/flatbuffer/*.stderr
+node_modules
+wasm/vw.js
+wasm/package-lock.json
+
+/.vs
+out/
+sdl/
+
+#VS Code
+.vscode/settings.json
+
+cmake-build-debug
+cmake-build-release
+
+# C# benchmark results
+BenchmarkDotNet.Artifacts

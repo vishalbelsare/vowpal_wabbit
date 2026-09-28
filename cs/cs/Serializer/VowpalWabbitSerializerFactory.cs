@@ -7,6 +7,7 @@
 // --------------------------------------------------------------------------------------------------------------------
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -17,7 +18,7 @@ using VW.Serializer.Intermediate;
 using VW.Labels;
 using System.IO;
 using System.Runtime.CompilerServices;
-using System.Diagnostics.Contracts;
+using System.Diagnostics;
 using VW.Reflection;
 using System.Collections.ObjectModel;
 
@@ -31,7 +32,7 @@ namespace VW.Serializer
         /// <summary>
         /// Example and example result type based serializer cache.
         /// </summary>
-        private static readonly Dictionary<Key, object> SerializerCache = new Dictionary<Key, object>();
+        private static readonly ConcurrentDictionary<Key, object> SerializerCache = new ConcurrentDictionary<Key, object>();
 
         private sealed class Key
         {
@@ -43,7 +44,7 @@ namespace VW.Serializer
 
             internal bool EnableStringFloatCompact { get; set; }
 
-            internal List<Type> CustomFeaturizer { get; set; }
+            internal IList<Type> CustomFeaturizer { get; set; }
 
             public override bool Equals(object obj)
             {
@@ -53,16 +54,30 @@ namespace VW.Serializer
                     this.TypeInspector == other.TypeInspector &&
                     this.EnableStringExampleGeneration == other.EnableStringExampleGeneration &&
                     this.EnableStringFloatCompact == other.EnableStringFloatCompact &&
-                    ((this.CustomFeaturizer == null && other.CustomFeaturizer == null) || this.CustomFeaturizer.SequenceEqual(other.CustomFeaturizer));
+                    (this.CustomFeaturizer == null
+                        ? other.CustomFeaturizer == null
+                        : other.CustomFeaturizer != null && this.CustomFeaturizer.SequenceEqual(other.CustomFeaturizer));
             }
 
             public override int GetHashCode()
             {
+                // Hash CustomFeaturizer by content to match the SequenceEqual comparison in Equals;
+                // hashing by reference would violate the Equals/GetHashCode contract and cause
+                // duplicate cache entries for distinct list instances with identical content.
+                int customFeaturizerHash = 0;
+                if (this.CustomFeaturizer != null)
+                {
+                    foreach (var t in this.CustomFeaturizer)
+                    {
+                        customFeaturizerHash = (customFeaturizerHash * 397) ^ (t == null ? 0 : t.GetHashCode());
+                    }
+                }
+
                 return this.Type.GetHashCode() ^
                     this.TypeInspector.GetHashCode() ^
                     this.EnableStringExampleGeneration.GetHashCode() ^
                     this.EnableStringFloatCompact.GetHashCode() ^
-                    (this.CustomFeaturizer == null ? 1 : this.CustomFeaturizer.GetHashCode());
+                    customFeaturizerHash;
             }
         }
 

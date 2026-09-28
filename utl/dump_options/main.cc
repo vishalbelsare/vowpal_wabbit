@@ -2,46 +2,25 @@
 // individual contributors. All rights reserved. Released under a BSD (revised)
 // license as described in the file LICENSE.
 
+#include "vw/config/options_cli.h"
+#include "vw/core/memory.h"
 #define RAPIDJSON_HAS_STDSTRING 1
 
-#include "options.h"
-#include "vw.h"
-#include "version.h"
-
-#include <memory>
+#include "vw/config/help_formatter.h"
+#include "vw/config/options.h"
+#include "vw/core/version.h"
+#include "vw/core/vw.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <memory>
+
 using namespace VW::config;
 
 template <typename T>
-void add_default_value(rapidjson::Value& obj, const T& value, rapidjson::Document::AllocatorType& allocator) = delete;
-
-template <>
-void add_default_value<unsigned int>(
-    rapidjson::Value& obj, const unsigned int& value, rapidjson::Document::AllocatorType& allocator)
-{
-  obj.AddMember("default_value", value, allocator);
-}
-
-template <>
-void add_default_value<int>(rapidjson::Value& obj, const int& value, rapidjson::Document::AllocatorType& allocator)
-{
-  obj.AddMember("default_value", value, allocator);
-}
-
-template <>
-void add_default_value<int64_t>(
-    rapidjson::Value& obj, const int64_t& value, rapidjson::Document::AllocatorType& allocator)
-{
-  obj.AddMember("default_value", value, allocator);
-}
-
-template <>
-void add_default_value<uint64_t>(
-    rapidjson::Value& obj, const uint64_t& value, rapidjson::Document::AllocatorType& allocator)
+void add_default_value(rapidjson::Value& obj, const T& value, rapidjson::Document::AllocatorType& allocator)
 {
   obj.AddMember("default_value", value, allocator);
 }
@@ -55,32 +34,7 @@ void add_default_value<float>(rapidjson::Value& obj, const float& value, rapidjs
     val.SetString("inf");
     obj.AddMember("default_value", val, allocator);
   }
-  else
-  {
-    obj.AddMember("default_value", value, allocator);
-  }
-}
-
-template <>
-void add_default_value<double>(
-    rapidjson::Value& obj, const double& value, rapidjson::Document::AllocatorType& allocator)
-{
-  if (std::isinf(value))
-  {
-    rapidjson::Value val;
-    val.SetString("inf");
-    obj.AddMember("default_value", val, allocator);
-  }
-  else
-  {
-    obj.AddMember("default_value", value, allocator);
-  }
-}
-
-template <>
-void add_default_value<char>(rapidjson::Value& obj, const char& value, rapidjson::Document::AllocatorType& allocator)
-{
-  obj.AddMember("default_value", value, allocator);
+  else { obj.AddMember("default_value", value, allocator); }
 }
 
 template <>
@@ -93,95 +47,11 @@ void add_default_value<std::string>(
 }
 
 template <>
-void add_default_value<bool>(rapidjson::Value& obj, const bool& value, rapidjson::Document::AllocatorType& allocator)
-{
-  obj.AddMember("default_value", value, allocator);
-}
-
-template <>
-void add_default_value<std::vector<int>>(
-    rapidjson::Value& obj, const std::vector<int>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value) { array.PushBack(v, allocator); }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
-void add_default_value<std::vector<uint64_t>>(
-    rapidjson::Value& obj, const std::vector<uint64_t>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value) { array.PushBack(v, allocator); }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
-void add_default_value<std::vector<int64_t>>(
-    rapidjson::Value& obj, const std::vector<int64_t>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value) { array.PushBack(v, allocator); }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
-void add_default_value<std::vector<float>>(
-    rapidjson::Value& obj, const std::vector<float>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value)
-  {
-    if (std::isinf(v))
-    {
-      rapidjson::Value val;
-      val.SetString("inf");
-      array.PushBack(val, allocator);
-    }
-    else
-    {
-      array.PushBack(v, allocator);
-    }
-  }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
-void add_default_value<std::vector<double>>(
-    rapidjson::Value& obj, const std::vector<double>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value)
-  {
-    if (std::isinf(v))
-    {
-      rapidjson::Value val;
-      val.SetString("inf");
-      array.PushBack(val, allocator);
-    }
-    else
-    {
-      array.PushBack(v, allocator);
-    }
-  }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
-void add_default_value<std::vector<char>>(
-    rapidjson::Value& obj, const std::vector<char>& value, rapidjson::Document::AllocatorType& allocator)
-{
-  rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value) { array.PushBack(v, allocator); }
-  obj.AddMember("default_value", array, allocator);
-}
-
-template <>
 void add_default_value<std::vector<std::string>>(
     rapidjson::Value& obj, const std::vector<std::string>& value, rapidjson::Document::AllocatorType& allocator)
 {
   rapidjson::Value array(rapidjson::kArrayType);
-  for (auto& v : value)
+  for (const auto& v : value)
   {
     rapidjson::Value val;
     val.SetString(v, allocator);
@@ -190,194 +60,148 @@ void add_default_value<std::vector<std::string>>(
   obj.AddMember("default_value", array, allocator);
 }
 
-struct options_exporter : options_i
+template <typename T>
+void add_one_of(rapidjson::Value& obj, const std::set<T>& value, rapidjson::Document::AllocatorType& allocator)
 {
-  options_exporter()
+  rapidjson::Value one_of_array(rapidjson::kArrayType);
+  for (const auto& val : value) { one_of_array.PushBack(val, allocator); }
+  obj.AddMember("one_of", one_of_array, allocator);
+}
+
+template <>
+void add_one_of<std::string>(
+    rapidjson::Value& obj, const std::set<std::string>& value, rapidjson::Document::AllocatorType& allocator)
+{
+  rapidjson::Value one_of_array(rapidjson::kArrayType);
+  for (const auto& val : value)
+  {
+    rapidjson::Value one_of_val;
+    one_of_val.SetString(val, allocator);
+    one_of_array.PushBack(one_of_val, allocator);
+  }
+  obj.AddMember("one_of", one_of_array, allocator);
+}
+
+template <>
+void add_one_of<std::vector<std::string>>(rapidjson::Value& obj, const std::set<std::vector<std::string>>& value,
+    rapidjson::Document::AllocatorType& allocator)
+{
+  THROW("not supported");
+}
+
+template <typename T>
+void inject_typed_info(const typed_option<T>& option, const std::string& type_name, rapidjson::Value& obj,
+    rapidjson::Document::AllocatorType& allocator)
+{
+  obj.AddMember("type", type_name, allocator);
+  obj.AddMember("has_default", option.default_value_supplied(), allocator);
+  if (option.default_value_supplied()) { add_default_value<T>(obj, option.default_value(), allocator); }
+  if (!option.one_of().empty()) { add_one_of<T>(obj, option.one_of(), allocator); }
+}
+
+struct type_info_injector : typed_option_visitor
+{
+  rapidjson::Value& m_obj;
+  rapidjson::Document::AllocatorType& m_allocator;
+
+  type_info_injector(rapidjson::Value& obj, rapidjson::Document::AllocatorType& allocator)
+      : m_obj(obj), m_allocator(allocator)
+  {
+  }
+
+  void visit(typed_option<uint32_t>& option) override { inject_typed_info(option, "uint", m_obj, m_allocator); }
+  void visit(typed_option<uint64_t>& option) override { inject_typed_info(option, "uint", m_obj, m_allocator); }
+  void visit(typed_option<int64_t>& option) override { inject_typed_info(option, "int", m_obj, m_allocator); }
+  void visit(typed_option<int32_t>& option) override { inject_typed_info(option, "int", m_obj, m_allocator); }
+  void visit(typed_option<bool>& option) override { inject_typed_info(option, "bool", m_obj, m_allocator); }
+  void visit(typed_option<float>& option) override { inject_typed_info(option, "float", m_obj, m_allocator); }
+  void visit(typed_option<std::string>& option) override { inject_typed_info(option, "str", m_obj, m_allocator); }
+  void visit(typed_option<std::vector<std::string>>& option) override
+  {
+    inject_typed_info(option, "list[str]", m_obj, m_allocator);
+  }
+};
+
+struct json_help_formatter : VW::config::help_formatter
+{
+  rapidjson::Document document;
+
+  json_help_formatter(rapidjson::Document&& doc) : document(std::move(doc)) {}
+
+  std::string format_help(const std::vector<option_group_definition>& groups) override
   {
     // must pass an allocator when the object may need to allocate memory
-    auto& allocator = _document.GetAllocator();
-    // define the _document as an object rather than an array
-    _document.SetObject();
+    auto& allocator = document.GetAllocator();
 
     // create a rapidjson array type with similar syntax to std::vector
     rapidjson::Value array(rapidjson::kArrayType);
-    _document.AddMember("option_groups", array, allocator);
-  }
+    document.AddMember("option_groups", array, allocator);
 
-  template <typename T>
-  void inject_type_info_if_t(const std::string& type_name, rapidjson::Value& obj,
-      const std::shared_ptr<base_option>& option, rapidjson::Document::AllocatorType& allocator) const
-  {
-    if (option->m_type_hash == typeid(T).hash_code())
+    for (const auto& group : groups)
     {
-      auto typed = std::dynamic_pointer_cast<typed_option<T>>(option);
-      obj.AddMember("type", type_name, allocator);
-      obj.AddMember("has_default", typed->default_value_supplied(), allocator);
-      if (typed->default_value_supplied())
-      {
-        // We also need to set the output so VW functions correctly.
-        typed->value(typed->default_value(), true);
+      rapidjson::Value group_object(rapidjson::kObjectType);
+      rapidjson::Value group_name_value;
+      group_name_value.SetString(group.m_name, allocator);
+      group_object.AddMember("name", group_name_value, allocator);
 
-        add_default_value<T>(obj, typed->default_value(), allocator);
-      }
-      // There is an implict contract for boolean options to be set to false by default.
-      else if (option->m_type_hash == typeid(bool).hash_code())
+      rapidjson::Value options_array(rapidjson::kArrayType);
+
+      for (const auto& option : group.m_options)
       {
-        auto bool_typed = std::dynamic_pointer_cast<typed_option<bool>>(option);
-        bool_typed->value(false, true);
+        rapidjson::Value option_obj(rapidjson::kObjectType);
+
+        rapidjson::Value name_value;
+        name_value.SetString(option->m_name, allocator);
+        option_obj.AddMember("name", name_value, allocator);
+        rapidjson::Value help_value;
+        help_value.SetString(option->m_help, allocator);
+        option_obj.AddMember("help", help_value, allocator);
+        if (!option->m_short_name.empty())
+        {
+          rapidjson::Value short_name_value;
+          short_name_value.SetString(option->m_short_name, allocator);
+          option_obj.AddMember("short_name", short_name_value, allocator);
+        }
+        option_obj.AddMember("keep", option->m_keep, allocator);
+        option_obj.AddMember("necessary", option->m_necessary, allocator);
+        option_obj.AddMember("experimental", option->m_experimental, allocator);
+        type_info_injector injector(option_obj, allocator);
+        option->accept(injector);
+        options_array.PushBack(option_obj, allocator);
       }
 
-      // We don't want normal VW output in this program.
-      if (option->m_name == "quiet")
-      {
-        auto bool_typed = std::dynamic_pointer_cast<typed_option<bool>>(option);
-        bool_typed->value(true, true);
-      }
+      group_object.AddMember("options", options_array, allocator);
+      document["option_groups"].PushBack(group_object, allocator);
     }
+    rapidjson::StringBuffer strbuf;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
+    document.Accept(writer);
+    return strbuf.GetString();
   }
-
-  void inject_type_info(rapidjson::Value& obj, const std::shared_ptr<base_option>& option,
-      rapidjson::Document::AllocatorType& allocator) const
-  {
-    inject_type_info_if_t<unsigned int>("unsigned int", obj, option, allocator);
-    inject_type_info_if_t<int>("int", obj, option, allocator);
-    inject_type_info_if_t<uint64_t>("uint64_t", obj, option, allocator);
-    inject_type_info_if_t<int64_t>("int64_t", obj, option, allocator);
-    inject_type_info_if_t<float>("float", obj, option, allocator);
-    inject_type_info_if_t<double>("double", obj, option, allocator);
-    inject_type_info_if_t<char>("char", obj, option, allocator);
-    inject_type_info_if_t<std::string>("string", obj, option, allocator);
-    inject_type_info_if_t<bool>("bool", obj, option, allocator);
-    inject_type_info_if_t<std::vector<int>>("list<int>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<uint64_t>>("list<uint64_t>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<int64_t>>("list<int64_t>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<float>>("list<float>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<double>>("list<double>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<char>>("list<char>", obj, option, allocator);
-    inject_type_info_if_t<std::vector<std::string>>("list<string>", obj, option, allocator);
-  }
-
-  void add_and_parse(const option_group_definition& group) override
-  {
-    rapidjson::Document::AllocatorType& allocator = _document.GetAllocator();
-
-    rapidjson::Value group_object(rapidjson::kObjectType);
-    rapidjson::Value group_name_value;
-    group_name_value.SetString(group.m_name, allocator);
-    group_object.AddMember("name", group_name_value, allocator);
-
-    rapidjson::Value options_array(rapidjson::kArrayType);
-
-    for (const auto& option : group.m_options)
-    {
-      _all_options[option->m_name] = option;
-      rapidjson::Value option_obj(rapidjson::kObjectType);
-
-      rapidjson::Value name_value;
-      name_value.SetString(option->m_name, allocator);
-      option_obj.AddMember("name", name_value, allocator);
-      rapidjson::Value help_value;
-      help_value.SetString(option->m_help, allocator);
-      option_obj.AddMember("help", help_value, allocator);
-      rapidjson::Value short_name_value;
-      short_name_value.SetString(option->m_short_name, allocator);
-      option_obj.AddMember("short_name", short_name_value, allocator);
-      option_obj.AddMember("keep", option->m_keep, allocator);
-      option_obj.AddMember("necessary", option->m_necessary, allocator);
-      inject_type_info(option_obj, option, allocator);
-
-      options_array.PushBack(option_obj, allocator);
-    }
-
-    group_object.AddMember("options", options_array, allocator);
-    _document["option_groups"].PushBack(group_object, allocator);
-  }
-
-  bool add_parse_and_check_necessary(const option_group_definition& group) override
-  {
-    add_and_parse(group);
-    return false;
-  }
-
-  bool was_supplied(const std::string&) const override { return false; }
-
-  void tint(const std::string&) override {}
-
-  void reset_tint() override {}
-
-  std::string help(const std::vector<std::string>&) const override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-
-  void check_unregistered() override {}
-
-  std::vector<std::shared_ptr<base_option>> get_all_options() override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-
-  std::vector<std::shared_ptr<const base_option>> get_all_options() const override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-
-  std::shared_ptr<base_option> get_option(const std::string& name) override
-  {
-    const auto it = _all_options.find(name);
-    if (it != _all_options.end()) { return it->second; }
-
-    throw std::out_of_range(name + " was not found.");
-  }
-
-  std::shared_ptr<const base_option> get_option(const std::string& name) const override
-  {
-    const auto it = _all_options.find(name);
-    if (it != _all_options.end()) { return it->second; }
-
-    throw std::out_of_range(name + " was not found.");
-  }
-
-  std::map<std::string, std::vector<option_group_definition>> get_collection_of_options() const override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-  void insert(const std::string&, const std::string&) override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-  void replace(const std::string&, const std::string&) override
-  {
-    throw std::runtime_error{"This function is not defined."};
-  }
-  std::vector<std::string> get_positional_tokens() const override { return {}; }
-
-  std::map<std::string, std::shared_ptr<base_option>> _all_options;
-  rapidjson::Document _document;
 };
 
 int main(int argc, char* argv[])
 {
-  options_exporter exporter;
-  auto* vw = VW::initialize(exporter);
+  std::vector<std::string> args{"--quiet"};
+  auto vw = VW::initialize(VW::make_unique<VW::config::options_cli>(args));
 
-  auto& allocator = exporter._document.GetAllocator();
+  rapidjson::Document doc;
+  auto& allocator = doc.GetAllocator();
+
+  // define the document as an object rather than an array
+  doc.SetObject();
+
   rapidjson::Value version_object(rapidjson::kObjectType);
   rapidjson::Value version_text;
-  version_text.SetString(VW::version.to_string(), allocator);
+  version_text.SetString(VW::VERSION.to_string(), allocator);
   version_object.AddMember("version", version_text, allocator);
   rapidjson::Value git_commit_text;
-  git_commit_text.SetString(VW::git_commit, allocator);
+  git_commit_text.SetString(VW::GIT_COMMIT, allocator);
   version_object.AddMember("git_commit", git_commit_text, allocator);
-  exporter._document.AddMember("version_info", version_object, allocator);
+  doc.AddMember("version_info", version_object, allocator);
 
-  rapidjson::StringBuffer strbuf;
-  rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
-  exporter._document.Accept(writer);
-
-  std::cout << strbuf.GetString() << std::endl;
-
-  delete vw;
+  json_help_formatter formatter(std::move(doc));
+  std::cout << formatter.format_help(vw->options->get_all_option_group_definitions()) << std::endl;
 
   return 0;
 }

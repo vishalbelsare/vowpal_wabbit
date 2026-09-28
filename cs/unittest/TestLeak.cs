@@ -1,21 +1,60 @@
-﻿using VW;
+using System;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using VW;
 
 namespace cs_unittest
 {
-    public class TestLeakClass
+    [TestClass]
+    public class TestLeak
     {
-        public void Leak()
+        [TestMethod]
+        [TestCategory("Vowpal Wabbit")]
+        public void TestExamplePoolCleanupOnDispose()
         {
-#if DEBUG
-            VowpalWabbitLeakTest.Leak();
-#endif
+            // Verify that disposing a VowpalWabbit instance cleans up pooled
+            // native examples without crashing. Before the fix, pooled examples
+            // leaked native memory because InternalDispose() was a stub.
+            using (var vw = new VowpalWabbit("--quiet"))
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    using (var example = vw.GetOrCreateNativeExample())
+                    {
+                        // Example returns to pool on Dispose
+                    }
+                }
+            }
+
+            // Force GC to surface any dangling native handles that would
+            // crash if the workspace was deleted before the examples.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
         }
 
-        public void NoLeak()
+        [TestMethod]
+        [TestCategory("Vowpal Wabbit")]
+        public void TestRepeatedCreateDisposeNoLeak()
         {
-#if DEBUG
-            VowpalWabbitLeakTest.NoLeak();
-#endif
+            // Stress test: many VW instances each exercising the example pool.
+            // Without proper cleanup in OperatorDelete, native memory grows
+            // without bound across iterations.
+            for (int round = 0; round < 50; round++)
+            {
+                using (var vw = new VowpalWabbit("--quiet"))
+                {
+                    for (int i = 0; i < 200; i++)
+                    {
+                        using (var example = vw.GetOrCreateNativeExample())
+                        {
+                        }
+                    }
+                }
+            }
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
         }
     }
 }

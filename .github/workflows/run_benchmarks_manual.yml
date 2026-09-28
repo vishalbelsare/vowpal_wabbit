@@ -15,32 +15,69 @@ on:
         required: true
         default: 'master'
 
+permissions:
+  contents: read
+
 jobs:
   benchmark:
-    container:
-      image: vowpalwabbit/ubuntu1804-build:latest
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
+          submodules: false
           ref: ${{ github.event.inputs.benchmarks_ref }}
+
+      - name: Init submodules with retry
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          for attempt in 1 2 3 4 5; do
+            if git submodule update --init --recursive; then
+              echo "Submodule init succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "Submodule init failed after 5 attempts"
+          exit 1
       - name: Store benchmark related script(s)
         shell: bash
         run: cp ./.scripts/linux/*benchmarks.sh test/benchmarks/
       - name: Upload benchmark module
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: benchmark-module
           path: test/benchmarks/
+          if-no-files-found: error
 # checkout first ref
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
+          submodules: false
           ref: ${{ github.event.inputs.base_ref }}
+
+      - name: Init submodules with retry
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          for attempt in 1 2 3 4 5; do
+            if git submodule update --init --recursive; then
+              echo "Submodule init succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "Submodule init failed after 5 attempts"
+          exit 1
       - name: Remove existing benchmark module (in favour of master)
         shell: bash
         run: rm -rf test/benchmarks
       - name: Download master's benchmark module
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: benchmark-module
           path: test/benchmarks/
@@ -60,36 +97,58 @@ jobs:
         shell: bash
         run: ./.scripts/linux/run-benchmarks.sh base-benchmarks.json
       - name: Upload ${{ github.event.inputs.base_ref }} benchmark results
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: base-benchmarks
           path: base-benchmarks.json
+          if-no-files-found: error
       - name: Upload benchmark compare
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: benchmark-compare
           path: benchmark/tools/
+          if-no-files-found: error
       - name: Install benchmark compare requirements
         shell: bash
-        run: python3 -m pip install -r benchmark/tools/requirements.txt
+        run: |
+          python3 -m pip install -r benchmark/tools/requirements.txt
+          # The above requirements file is missing the pandas dependency.
+          python3 -m pip install pandas
       - run: rm -rf benchmark build vowpalwabbit/parser/flatbuffer/generated/ test/benchmarks/ # generated or downloaded files
 # checkout second ref
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
+          submodules: false
           ref: ${{ github.event.inputs.compare_ref }}
+
+      - name: Init submodules with retry
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          for attempt in 1 2 3 4 5; do
+            if git submodule update --init --recursive; then
+              echo "Submodule init succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying in 15s..."
+            sleep 15
+          done
+          echo "Submodule init failed after 5 attempts"
+          exit 1
       - name: Download ${{ github.event.inputs.base_ref }} benchmark results
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: base-benchmarks
       - name: Download benchmark compare
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: benchmark-compare
       - name: Remove existing benchmark module (in favour of master)
         shell: bash
         run: rm -rf test/benchmarks
       - name: Download master's benchmark module
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: benchmark-module
           path: test/benchmarks/

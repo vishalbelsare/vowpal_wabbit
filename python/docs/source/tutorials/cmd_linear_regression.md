@@ -1,4 +1,4 @@
-# Linear Regression Tutorial
+# Command Line Linear Regression
 
 This tutorial demonstrates how to approach a regression problem with Vowpal Wabbit. It features an overview of a linear regression problem using a Vowpal Wabbit workflow tutorial with examples, introduces unique Vowpal Wabbit features, and explains how to structure input and understand the results.
 
@@ -298,7 +298,7 @@ vw -i house.model -t house_dataset -p /dev/stdout --quiet
 0.000000
 1.000000 second_house
 0.000000 third_house
-</div>
+```
 
 Obviously the results are different this time, because in the first prediction example, we learned as we went, and made only one pass over the data. For the second example, we loaded an over-fitted (25 pass) model and used our dataset `house_dataset` with `-t` (testing only mode).
 

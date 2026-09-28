@@ -8,6 +8,12 @@ if (NOT BUILD_ONLY_STANDALONE_BENCHMARKS)
   set(all_sources ${all_sources}
     input_format_benchmarks.cc
     benchmark_funcs.cc
+    benchmark_epsilon_decay.cc
+    ../../vowpalwabbit/core/tests/simulator.cc
+
+    # These are just for benchmarking specific standard library operations
+    #benchmark_std_function.cc
+    #benchmark_pointers.cc
   )
 endif()
 
@@ -18,8 +24,7 @@ add_executable(vw-benchmarks.out
 find_package(benchmark REQUIRED)
 
 # Add the include directories from vw target for testing
-target_include_directories(vw-benchmarks.out PRIVATE $<TARGET_PROPERTY:vw,INCLUDE_DIRECTORIES>)
-target_link_libraries(vw-benchmarks.out PRIVATE vw benchmark::benchmark)
+target_link_libraries(vw-benchmarks.out PRIVATE vw_core benchmark::benchmark)
 
 # Communicate that Boost Unit Test is being statically linked
 if(STATIC_LINK_VW)

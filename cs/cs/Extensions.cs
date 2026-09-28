@@ -8,7 +8,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.Contracts;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,23 +21,23 @@ namespace VW
     public static class Extensions
     {
         /// <summary>
-        /// Returns the elements specified by indicies/
+        /// Returns the elements specified by indices/
         /// </summary>
         /// <typeparam name="T">The element type.</typeparam>
         /// <param name="source">The enumerable source.</param>
-        /// <param name="indicies">The indicies to be selected.</param>
+        /// <param name="indices">The indices to be selected.</param>
         /// <returns>The subset of elements.</returns>
-        public static T[] Subset<T>(this IEnumerable<T> source, int[] indicies)
+        public static T[] Subset<T>(this IEnumerable<T> source, int[] indices)
         {
-            Contract.Requires(source != null);
-            Contract.Requires(indicies != null);
+            Debug.Assert(source != null);
+            Debug.Assert(indices != null);
 
             // re-shuffle
-            var result = new T[indicies.Length];
+            var result = new T[indices.Length];
             var i = 0;
             foreach (var item in source)
 	        {
-               result[indicies[i]] = item; 
+               result[indices[i]] = item; 
                i++;
 	        }
 
@@ -53,8 +53,8 @@ namespace VW
         /// <returns>The index of the first element to match or -1 if none matched.</returns>
         public static int IndexOf<T>(this IEnumerable<T> source, Predicate<T> predicate)
         {
-            Contract.Requires(source != null);
-            Contract.Requires(predicate != null);
+            Debug.Assert(source != null);
+            Debug.Assert(predicate != null);
 
             var i = 0;
             foreach (var t in source)

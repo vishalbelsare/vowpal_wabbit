@@ -3,13 +3,13 @@
 // license as described in the file LICENSE.
 
 #include "vw_cbutil.h"
-#include "cb_algs.h"
+#include "vw/core/reductions/cb/cb_algs.h"
 
 namespace VW
 {
 float VowpalWabbitContextualBanditUtil::GetUnbiasedCost(uint32_t actionObservered, uint32_t actionTaken, float cost, float probability)
 {
-  CB::cb_class observation(cost, actionObservered, probability);
-  return CB_ALGS::get_cost_estimate(observation, actionTaken);
+  VW::cb_class observation(cost, actionObservered, probability);
+  return VW::get_cost_estimate(observation, actionTaken);
 }
 }

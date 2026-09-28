@@ -11,11 +11,11 @@ license as described in the file LICENSE.
 #include "vw_example.h"
 
 #include "clr_io.h"
-#include "io_buf.h"
-#include "io/io_adapter.h"
-#include "vw_exception.h"
-#include "parse_args.h"
-#include "parse_regressor.h"
+#include "vw/core/io_buf.h"
+#include "vw/io/io_adapter.h"
+#include "vw/common/vw_exception.h"
+#include "vw/core/parse_args.h"
+#include "vw/core/parse_regressor.h"
 
 using namespace System;
 using namespace System::Collections::Generic;
@@ -27,7 +27,7 @@ void trace_listener_cli(void* context, const std::string& message)
 {
 	auto listener = (Action<String^>^)GCHandle::FromIntPtr(IntPtr(context)).Target;
 	auto str = gcnew String(message.c_str());
-	listener(str->TrimEnd());
+	listener(str);
 }
 
 VowpalWabbitBase::VowpalWabbitBase(VowpalWabbitSettings^ settings)
@@ -71,7 +71,7 @@ VowpalWabbitBase::VowpalWabbitBase(VowpalWabbitSettings^ settings)
         }
         else
         {
-          io_buf model;
+          VW::io_buf model;
           auto* stream = new clr_stream_adapter(settings->ModelStream);
           model.add_file(std::unique_ptr<VW::io::reader>(stream));
           m_vw = VW::initialize(string, &model, false, trace_listener, trace_context);
@@ -115,7 +115,7 @@ void VowpalWabbitBase::DecrementReference()
 
 void VowpalWabbitBase::DisposeExample(VowpalWabbitExample^ ex)
 {
-  VW::dealloc_examples(ex->m_example, 1);
+  delete ex->m_example;
 
   // cleanup pointers in example chain
   auto inner = ex;
@@ -139,20 +139,15 @@ void VowpalWabbitBase::InternalDispose()
 
       m_examples = nullptr;
     }
-
-    if (m_model != nullptr)
-    { // this object doesn't own the VW instance
-      m_model->DecrementReference();
-      m_model = nullptr;
-    }
   }
 
   try
   { if (m_vw != nullptr)
-    { reset_source(*m_vw, m_vw->num_bits);
+    {
+      VW::details::reset_source(*m_vw, m_vw->initial_weights_config.num_bits);
 
       // make sure don't try to free m_vw twice in case VW::finish throws.
-      vw* vw_tmp = m_vw;
+      VW::workspace* vw_tmp = m_vw;
       m_vw = nullptr;
       VW::finish(*vw_tmp);
     }
@@ -160,6 +155,15 @@ void VowpalWabbitBase::InternalDispose()
     // don't add code here as in the case of VW::finish throws an exception it won't be called
   }
   CATCHRETHROW
+
+  // Release the model reference AFTER finishing this workspace. The seeded workspace
+  // shares weights and shared_data with the model via shallow_copy/shared_ptr.
+  // If we decrement before finishing, the model may be destroyed while this workspace
+  // still needs the shared resources, causing an AccessViolationException.
+  if (m_model != nullptr)
+  { m_model->DecrementReference();
+    m_model = nullptr;
+  }
 }
 
 VowpalWabbitSettings^ VowpalWabbitBase::Settings::get()
@@ -185,23 +189,24 @@ void VowpalWabbitBase::Reload([System::Runtime::InteropServices::Optional] Strin
   auto stringArgs = msclr::interop::marshal_as<std::string>(args);
 
   try
-  { reset_source(*m_vw, m_vw->num_bits);
+  {
+    VW::details::reset_source(*m_vw, m_vw->initial_weights_config.num_bits);
 
     auto buffer = std::make_shared<std::vector<char>>();
     {
-      io_buf write_buffer;
+      VW::io_buf write_buffer;
       write_buffer.add_file(VW::io::create_vector_writer(buffer));
       VW::save_predictor(*m_vw, write_buffer);
     }
 
     // make sure don't try to free m_vw twice in case VW::finish throws.
-    vw* vw_tmp = m_vw;
+    VW::workspace* vw_tmp = m_vw;
     m_vw = nullptr;
     VW::finish(*vw_tmp);
 
     // reload from model
     // seek to beginning
-    io_buf reader_view_of_buffer;
+    VW::io_buf reader_view_of_buffer;
     reader_view_of_buffer.add_file(VW::io::create_buffer_view(buffer->data(), buffer->size()));
     m_vw = VW::initialize(stringArgs.c_str(), &reader_view_of_buffer);
   }
@@ -223,7 +228,7 @@ void VowpalWabbitBase::ID::set(String^ value)
 }
 
 void VowpalWabbitBase::SaveModel()
-{ std::string name = m_vw->final_regressor_name;
+{ std::string name = m_vw->output_model_config.final_regressor_name;
   if (name.empty())
   { return;
   }
@@ -237,9 +242,12 @@ void VowpalWabbitBase::SaveModel(String^ filename)
     throw gcnew ArgumentException("Filename must not be null or empty");
 
   String^ directoryName = System::IO::Path::GetDirectoryName(filename);
-
   if (!String::IsNullOrEmpty(directoryName))
-  { System::IO::Directory::CreateDirectory(directoryName);
+  {
+    auto dir = msclr::interop::marshal_as<std::string>(directoryName);
+    // CreateDirectoryA requires a LPCSTR (long, pointer to c-string) so .c_str() should work.
+    // The second argument, lpSecurityAttributes, is optional.
+    CreateDirectoryA(dir.c_str(), nullptr);
   }
 
   auto name = msclr::interop::marshal_as<std::string>(filename);
@@ -256,7 +264,7 @@ void VowpalWabbitBase::SaveModel(Stream^ stream)
 
   try
   {
-    io_buf buf;
+    VW::io_buf buf;
     auto* stream_adapter = new clr_stream_adapter(stream);
     buf.add_file(std::unique_ptr<VW::io::writer>(stream_adapter));
     VW::save_predictor(*m_vw, buf);

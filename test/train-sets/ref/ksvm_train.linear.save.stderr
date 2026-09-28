@@ -1,0 +1,33 @@
+using l2 regularization = 1
+final_regressor = models/ksvm.model
+Lambda = 1
+Kernel = linear
+using no cache
+Reading datafile = train-sets/ksvm_simple.dat
+num sources = 1
+Num weight bits = 18
+learning rate = 0.5
+initial_t = 0
+power_t = 0.5
+Enabled learners: ksvm, scorer-identity, count_label
+Input label = SIMPLE
+Output pred = SCALAR
+average  since         example        example        current        current  current
+loss     last          counter         weight          label        predict features
+1.000000 1.000000            1            1.0         1.0000         0.0000        3
+0.833333 0.666667            2            2.0        -1.0000        -0.3333        3
+0.491272 0.149211            4            4.0        -1.0000        -0.8490        3
+0.269003 0.046733            8            8.0        -1.0000        -0.8258        3
+0.144401 0.019799           16           16.0        -1.0000        -1.0602        3
+
+finished run
+number of examples = 20
+weighted example sum = 20.000000
+weighted label sum = 0.000000
+average loss = 0.124400
+best constant = -1.000000
+best constant's loss = 1.000000
+total feature number = 60
+Num support = 8
+Number of kernel evaluations = 350 Number of cache queries = 787
+Total loss = 2.488007

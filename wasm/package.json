@@ -1,0 +1,66 @@
+{
+  "name": "@vowpalwabbit/vowpalwabbit",
+  "version": "0.0.10",
+  "description": "wasm bindings for vowpal wabbit",
+  "exports": {
+    ".": {
+      "node": {
+        "types": "./types/index.d.ts",
+        "require": "./dist/vwnode.js"
+      },
+      "browser": {
+        "types": "./types/index.d.ts",
+        "import": "./dist/vwbrowser.js"
+      },
+      "types": "./types/index.d.ts",
+      "default": "./dist/vwnode.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "dist/vwnode.js",
+  "module": "./dist/vwnode.js",
+  "types": "types/index.d.ts",
+  "browser": {
+    "./dist/vwbrowser.js": "./dist/vwbrowser.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "types/**/*.d.ts",
+    "src/**/*.ts",
+    "!src/**/*.cc"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.2.1",
+    "jsdoc-to-markdown": "^8.0.0",
+    "mocha": "^9.1.2",
+    "typescript": "^5.0.4"
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "prepublishOnly": "npm test && npm run verify-package",
+    "build": "tsc",
+    "verify-package": "node scripts/verify-package.js",
+    "test": "node ./node_modules/mocha/bin/mocha --delay",
+    "docs": "jsdoc2md ./dist/vw*.js > documentation.md"
+  },
+  "dependencies": {
+    "out": "^1.1.0",
+    "uuid": "^9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VowpalWabbit/vowpal_wabbit.git",
+    "directory": "wasm"
+  },
+  "keywords": [
+    "vowpal",
+    "wabbit",
+    "wasm",
+    "contextual",
+    "bandits",
+    "reinforcement",
+    "learning"
+  ],
+  "author": "olgavrou",
+  "license": "BSD-3-Clause"
+}

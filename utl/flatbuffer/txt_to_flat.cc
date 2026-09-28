@@ -6,26 +6,27 @@
 #  define NOMINMAX
 #  include <WinSock2.h>
 #else
-#  include <sys/socket.h>
 #  include <arpa/inet.h>
+#  include <sys/socket.h>
 #endif
-#include <sys/timeb.h>
-#include "parse_args.h"
-#include "parse_regressor.h"
-#include "accumulate.h"
-#include "best_constant.h"
-#include "vw_exception.h"
-#include <fstream>
-
-#include "options.h"
-#include "options_boost_po.h"
+#include "vw/common/vw_exception.h"
+#include "vw/config/options.h"
+#include "vw/config/options_cli.h"
+#include "vw/core/accumulate.h"
+#include "vw/core/best_constant.h"
+#include "vw/core/parse_args.h"
+#include "vw/core/parse_regressor.h"
 #include "vw_to_flat.h"
+
+#include <sys/timeb.h>
+
+#include <fstream>
 
 using namespace VW::config;
 
-VW::workspace* setup(std::unique_ptr<options_i, options_deleter_type> options)
+std::unique_ptr<VW::workspace> setup(std::unique_ptr<options_i> options)
 {
-  VW::workspace* all = nullptr;
+  std::unique_ptr<VW::workspace> all = nullptr;
   try
   {
     all = VW::initialize(std::move(options));
@@ -40,24 +41,12 @@ VW::workspace* setup(std::unique_ptr<options_i, options_deleter_type> options)
     std::cout << "unknown exception" << std::endl;
     throw;
   }
-  all->vw_is_main = true;
+  all->runtime_config.vw_is_main = true;
 
-  if (!all->logger.quiet && !all->bfgs && !all->searchstr && !all->options->was_supplied("audit_regressor"))
+  if (!all->output_config.quiet && !all->reduction_state.bfgs && !all->reduction_state.searchstr &&
+      !all->options->was_supplied("audit_regressor"))
   {
-    *(all->trace_message) << std::left << std::setw(shared_data::col_avg_loss) << std::left << "average"
-                          << " " << std::setw(shared_data::col_since_last) << std::left << "since"
-                          << " " << std::right << std::setw(shared_data::col_example_counter) << "example"
-                          << " " << std::setw(shared_data::col_example_weight) << "example"
-                          << " " << std::setw(shared_data::col_current_label) << "current"
-                          << " " << std::setw(shared_data::col_current_predict) << "current"
-                          << " " << std::setw(shared_data::col_current_features) << "current" << std::endl;
-    *(all->trace_message) << std::left << std::setw(shared_data::col_avg_loss) << std::left << "loss"
-                          << " " << std::setw(shared_data::col_since_last) << std::left << "last"
-                          << " " << std::right << std::setw(shared_data::col_example_counter) << "counter"
-                          << " " << std::setw(shared_data::col_example_weight) << "weight"
-                          << " " << std::setw(shared_data::col_current_label) << "label"
-                          << " " << std::setw(shared_data::col_current_predict) << "predict"
-                          << " " << std::setw(shared_data::col_current_features) << "features" << std::endl;
+    all->sd->print_update_header(*(all->output_runtime.trace_message));
   }
 
   return all;
@@ -71,13 +60,12 @@ int main(int argc, char* argv[])
   driver_config.add(make_option("fb_out", converter.output_flatbuffer_name));
   driver_config.add(make_option("collection_size", converter.collection_size));
 
-  std::vector<VW::workspace*> alls;
+  std::vector<std::unique_ptr<VW::workspace>> alls;
 
-  std::string q("--quiet");
-  argv[argc++] = const_cast<char*>(q.c_str());
+  std::vector<std::string> opts(argv + 1, argv + argc);
+  opts.emplace_back("--quiet");
 
-  std::unique_ptr<options_boost_po, options_deleter_type> ptr(
-      new options_boost_po(argc, argv), [](VW::config::options_i* ptr) { delete ptr; });
+  std::unique_ptr<options_cli> ptr(new options_cli(opts));
   ptr->add_and_parse(driver_config);
   alls.push_back(setup(std::move(ptr)));
   if (converter.collection_size > 0) { converter.collection = true; }
